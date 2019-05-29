@@ -5,7 +5,14 @@ Eclair
 
 Eclair: CUDA-based Library for Astronomical Image Reduction
 
-This module requires Astropy, NumPy and CuPy.
+This module provides some useful classes and functions
+in astronomical image reduction, 
+and their processing speed is acceralated by using GPU via CUDA.
+
+This module requires
+    1. NVIDIA GPU
+    2. CUDA
+    3. NumPy, Astropy and CuPy
 '''
 
 from astropy.io import fits
@@ -29,10 +36,10 @@ class FitsContainer:
         FITS name list
     header : dict, default None
         dict of FITS name and header
-        Before execute load() medthod, it is None.
+        Before calling load() medthod, it is None.
     data : 3-dimension cupy.ndarray, default None
         array of image data stacked along 1st axis
-        Before execute load() medthod, it is None.
+        Before calling load() medthod, it is None.
     slice : tupple of slice object, default (slice(0,None),slice(0,None))
         load() method refers to this value and slice the data.
         1st item is slice along Y, 2nd is along X.
@@ -43,7 +50,7 @@ class FitsContainer:
     Notes
     -----
     The order of items of list and data(along 1st axis) must be same.
-    So, be careful when you edit these value.
+    So, be careful when you edit these attributes.
     '''
 
     def __init__(self,list):
@@ -52,7 +59,7 @@ class FitsContainer:
         ----------
         list : array-like
             FITS name list
-            load() method refer this list to load FITS data.
+            load() method refer this list to load FITS contents.
         '''
         self.list  = list
         self.slice = (slice(0,None),slice(0,None))
@@ -74,7 +81,7 @@ class FitsContainer:
         header : astropy.io.fits.header
             FITS header
         data : 2-dimension cupy.ndarray
-            cupy.ndarray converted from FITS data 
+            FITS data 
         '''
         idx = self.list.index(key)
         return self.header[key], self.data[idx,:,:]
@@ -104,33 +111,39 @@ class FitsContainer:
 
         Parameters
         ----------
-        progress : function, default lambda *args:None
+        progress : callable object, default lambda *args:None
             Function to be executed simultaneously with data reading
             and given arguments (i, *args), where i is index of FITS
             If you want to do something simultaneously with reading,
             input as a function. (e.g. logging, showing progress bar, etc)
         args : tupple, default ()
-            argments to input additionally to the progress function
+            argments given additionally to the progress function
         '''
-        head, data = self.__fitsopen(self.list[0])
-        y_len, x_len = data.shape
+        n = len(self.list)
+        if n:
+            head, data = self.__fitsopen(self.list[0])
+            y_len, x_len = data.shape
 
-        self.header = {self.list[0]: head}
-        self.data   = cp.empty([len(self.list),y_len,x_len],dtype='f4')
-        self.data[0,:,:] = data
-        progress(0,*args)
-        for i,f in enumerate(self.list[1:],1):
-            head, data = self.__fitsopen(f)
-            self.header[f]   = head
-            self.data[i,:,:] = data
-            progress(i,*args)
+            self.header = {self.list[0]: head}
+            self.data   = cp.empty([n,y_len,x_len],dtype='f4')
+            self.data[0,:,:] = data
+            progress(0,*args)
+            for i,f in enumerate(self.list[1:],1):
+                head, data = self.__fitsopen(f)
+                self.header[f]   = head
+                self.data[i,:,:] = data
+                progress(i,*args)
+        else:
+            raise ValueError('No FITS name in self.list')
 
     def __fitsopen(self,f):
         with fits.open(f) as img:
             head = img[0].header
-            if ('CRPIX1' in head.keys()) and ('CRPIX2' in head.keys()):
+            try:
                 head['CRPIX1'] -= self.slice[1].start
                 head['CRPIX2'] -= self.slice[0].start
+            except KeyError:
+                pass
 
             data = cp.array(img[0].data[self.slice].astype('f4'))
         return head, data
@@ -192,7 +205,7 @@ class ImAlign:
     ----------
     x_len, y_len : int
         Shape of images to align
-    interp : 'spline3' or 'poly3' or 'linear', default 'spline3'
+    interp : {'spline3', 'poly3', 'linear'}, default 'spline3'
         Subpixel interpolation algorithm in subpixel image shift
          spline3 - 3rd order spline interpolation
          poly3   - 3rd order polynomial interpolation
@@ -204,7 +217,7 @@ class ImAlign:
         ----------
         x_len, y_len : int
             Shape of images to align
-        interp : 'spline3' or 'poly3' or 'linear', default 'spline3'
+        interp : {'spline3', 'poly3', 'linear'}, default 'spline3'
             Subpixel interpolation algorithm in subpixel image shift
              spline3 - 3rd order spline interpolation
              poly3   - 3rd order polynomial interpolation
@@ -228,7 +241,7 @@ class ImAlign:
         else:
             raise ValueError('"%s" is not defined as algorithm'%interp)
         
-    def __call__(self,data,shifts,baseidx=0,reject=False,tolerance=None,
+    def __call__(self,data,shifts,baseidx=None,reject=False,tolerance=None,
                  selected=None,progress=lambda *args:None,args=()):
         '''
         Stack the images with aligning their relative positions,
@@ -246,24 +259,25 @@ class ImAlign:
             as the 1st axis of "data".
             Along the 2nd axis, the 1st item is interpreted as 
             the value of X, the 2nd item as the value of Y.
-        baseidx : int, default 0
-            Index of base image
         reject : bool, default False
-            If True, reject over distant image.
-            Then, you must input tolerance and selected.
+            If True, reject too distant image.
+            Then, you must input baseidx, tolerance and selected.
+        baseidx : int, default None
+            Index of base image
+            If you set reject True, set also this parameter.
         tolerance : int or float, default None
             Maximum distance from base image, in units of pixel
-            If you set reject True, set this parameter.
+            If you set reject True, set also this parameter.
         selected : variable referencing empty list, default None
             List for storing indices of selected images
-            If you set reject True, set this parameter.
+            If you set reject True, set also this parameter.
         progress : function, default lambda *args:None
             Function to be executed simultaneously with aligning
             and given arguments (i, *args), where i is index of image
             If you want to do something simultaneously with aligning,
             input as a function. (e.g. logging, showing progress bar, etc)
         args : tupple
-            arguments to input additionally to the progress function
+            arguments given additionally to the progress function
 
         Returns
         -------
@@ -271,28 +285,26 @@ class ImAlign:
             An array of images aligned and stacked along the 1st axis
         '''
         n_frames, y_len, x_len = data.shape
-        if not(y_len==self.y_len and x_len==self.x_len):
+        if (y_len,x_len) != (self.y_len,self.x_len):
             message = 'shape of images is differ from (%d,%d)'
             raise ValueError(message%(self.y_len,self.x_len))
 
-        tmp_shifts = shifts - shifts[baseidx,:]
-
-        x_u, y_u = np.ceil(tmp_shifts.max(axis=0)).astype('int')
-        x_l, y_l = np.floor(tmp_shifts.min(axis=0)).astype('int')
+        x_u, y_u = np.ceil(shifts.max(axis=0)).astype('int')
+        x_l, y_l = np.floor(shifts.min(axis=0)).astype('int')
     
-        xy_i = np.floor(tmp_shifts).astype('int')
+        xy_i = np.floor(shifts).astype('int')
         xy_d = shifts - xy_i
 
         iterator = zip(xy_i,xy_d,data)
         if reject:
-            if tolerance and (selected==[]):
-                norm  = np.linalg.norm(shifts,axis=1)
+            if all(f!=None for f in (baseidx,tolerance,selected)):
+                norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
                 flags = (norm <= tolerance).astype('int')
                 n_frames = flags.sum()
                 selected += list(np.where(flags)[0])
                 iterator = _compress(iterator,flags)
             else:
-                raise ValueError('input tolerance and selected')
+                raise ValueError('baseidx or tolerance or selected is invalid')
 
         align = cp.zeros([n_frames,y_u-y_l+y_len-1,x_u-x_l+x_len-1],dtype='f4')
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
@@ -340,48 +352,18 @@ class ImAlign:
     
         return _spline(u[1:,:],u[:-1,:],data[1:,:],data[:-1,:],d)
 
-def imalign(data,shifts,interp='spline3',baseidx=0,reject=False,
+def imalign(data,shifts,interp='spline3',baseidx=None,reject=False,
             tolerance=None,selected=None):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
-    This function uses class ImAlign internally.
+    This function uses class eclair.ImAlign internally.
 
-    Parameters
-    ----------
-    data : 3-dimension cupy.ndarray
-        An array of images stacked along the 1st axis
-    shifts : 2-dimension numpy.ndarray
-        An array of relative positions of images in units of pixel
-        Along the 1st axis, values of each images must be the same order
-        as the 1st axis of "data".
-        Along the 2nd axis, the 1st item is interpreted as 
-        the value of X, the 2nd item as the value of Y.
-    interp : 'spline3' or 'poly3' or 'linear', default 'spline3'
-        Subpixel interpolation algorithm in subpixel image shift
-         spline3 - 3rd order spline interpolation
-         poly3   - 3rd order polynomial interpolation
-         linear  - linear interpolation
-    baseidx : int, default 0
-        Index of base image
-    reject : bool, default False
-        If True, reject over distant image.
-        Then, you must input tolerance and selected.
-    tolerance : int or float, default None
-        Maximum distance from base image, in units of pixel
-        If you set reject True, set this parameter.
-    selected : variable referencing empty list, default None
-        List for storing indices of selected images
-        If you set reject True, set this parameter.
+    Refer to eclair.ImAlign for documentation of parameters and return.
 
-    Returns
-    -------
-    align : 3-dimension cupy.ndarray (dtype float32)
-        An array of images aligned and stacked along the 1st axis
-    
     See also
     --------
-    ImAlign : Generate imalign function
+    eclair.ImAlign : Class to generate imalign function
     '''
     y_len, x_len = data.shape[1:]
     func = ImAlign(x_len=x_len,y_len=y_len,interp=interp)
@@ -390,11 +372,7 @@ def imalign(data,shifts,interp='spline3',baseidx=0,reject=False,
                 tolerance=tolerance,selected=selected)
 
 def _compress(data, selectors):
-    iter_data = iter(data)
-    iter_slct = iter(selectors)
-    while True:
-        d = next(iter_data)
-        s = next(iter_slct)
+    for d, s in zip(data,selectors):
         if s:
             yield d
 
@@ -423,7 +401,7 @@ _spline = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
 #############################
 
 def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
-              overwrite=False):
+              memsave=False,overwrite=False):
     '''
     Calculate sigma-clipped mean or median (no rejection) of images,
     and write to FITS file
@@ -436,8 +414,8 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
         An array of images stacked along the 1st axis
     name : str
         A name of output FITS file
-    combine : 'mean' or 'median', default 'mean'
-        An algorithm of combine images
+    combine : {'mean', 'median'}, default 'mean'
+        An algorithm to combine images
         'mean' is sigma-clipped mean, 'median' is median (no rejection).
     header : astropy.io.fits.header, default None
         A header for output FITS file
@@ -445,17 +423,31 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
         A number of sigmaclipping iterations
     width : int or float, default 3.0
         A clipping width in sigma units
-    overwrite : bool, default Flase
+    memsave : bool, default False
+        If True, divide data and calculate it serially.
+        Then, VRAM is saved, but speed may be slower.
+    overwrite : bool, default False
         If True, overwrite the output file if it exists.
         Raises an IOError if False and the output file exists.
     '''
 
     if   combine == 'mean':
-        combined = sigclipped_mean(data,iter=iter,width=width,axis=0)
+        func = sigclipped_mean
     elif combine == 'median':
-        combined = _median(data)
+        func = _median
     else:
-        raise TypeError('"%s" is not defined as algorithm'%combine)
+        raise ValueError('"%s" is not defined as algorithm'%combine)
+
+    kwargs = dict(iter=iter,width=width,axis=0)
+    if memsave:
+        y_len, x_len = data.shape[1:]
+        yhalf, xhalf = int(y_len/2), int(x_len/2)
+        combined = cp.empty([y_len,x_len],dtype='f4')
+        slices = tuple((slice(l),slice(l,None)) for l in(yhalf,xhalf))
+        for yslice, xslice in product(*slices):
+            combined[yslice,xslice] = func(data[:,yslice,xslice],**kwargs)
+    else:
+        combined = func(data,**kwargs)
 
     hdu = fits.PrimaryHDU(combined.get())
 
@@ -510,7 +502,7 @@ _sum = cp.ReductionKernel('T x, T f','T y','x*f','a+b','y=a','0','_sum')
 _sqm = cp.ReductionKernel('T x, T m, T f','T y','(x-m)*(x-m)*f','a+b','y=a',
                           '0','_sqm')
 
-def _median(data):
+def _median(data,**kwargs):
     length = data.shape[0]
     idx    = int(length/2)
     sort   = cp.sort(data,axis=0)
