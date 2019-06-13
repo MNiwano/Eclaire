@@ -20,7 +20,7 @@ and their processing speed is acceralated by using GPU via CUDA.
 * eclair.py  
 source file of this module
 * reduction.ipynb  
-sample program for trying Eclair that runs on Google Colaboratory
+sample program running on Google Colaboratory for trying Eclair
 * fitsget.ipynb  
 program to get FITS files for running reduction.ipynb
 * readme.pdf  
