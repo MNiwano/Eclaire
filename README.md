@@ -22,6 +22,6 @@ and their processing speed is acceralated by using GPU via CUDA.
 * **reduction.ipynb**  
     sample program running on Google Colaboratory for trying Eclair
 * **fitsget.ipynb**  
-    program to get FITS files for running reduction.ipynb
+    program to get FITS files as test data for running reduction.ipynb
 * **readme.pdf**  
     manual of reduction.ipynb and fitsget.ipynb
