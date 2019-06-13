@@ -18,4 +18,4 @@ and their processing speed is acceralated by using GPU via CUDA.
 
 ## Components
 * eclair.py
-source file of this module
+ source file of this module
