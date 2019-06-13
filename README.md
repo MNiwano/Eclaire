@@ -15,3 +15,7 @@ and their processing speed is acceralated by using GPU via CUDA.
   * NumPy
   * Astropy
   * CuPy
+
+## Components
+* eclair.py
+source file of this module
