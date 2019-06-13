@@ -239,7 +239,7 @@ class ImAlign:
         elif interp == 'linear':
             self.shift = self.__linear
         else:
-            raise ValueError('"%s" is not defined as algorithm'%interp)
+            raise ValueError('"%s" is not inpremented'%interp)
         
     def __call__(self,data,shifts,baseidx=None,reject=False,tolerance=None,
                  selected=None,progress=lambda *args:None,args=()):
@@ -299,7 +299,7 @@ class ImAlign:
         if reject:
             if all(f!=None for f in (baseidx,tolerance,selected)):
                 norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
-                flags = (norm <= tolerance).astype('int')
+                flags = (norm <= tolerance)
                 n_frames = flags.sum()
                 selected += list(np.where(flags)[0])
                 iterator = _compress(iterator,flags)
@@ -336,8 +336,8 @@ class ImAlign:
             shift_vector[i*4+j] = (1-dx)**(3-i) * (1-dy)**(3-j)
             stack[i*4+j,:,:]  = data[i:i+y_len,j:j+x_len]
 
-        coeff = cp.tensordot(self.mat,stack,1)
-        shifted[1:-1,1:-1] = cp.tensordot(shift_vector,coeff,1)
+        tmpmat = cp.dot(shift_vector,self.mat)
+        shifted[1:-1,1:-1] = cp.tensordot(tmpmat,stack,1)
 
         return shifted
 
@@ -393,7 +393,7 @@ def _Ms(ax_len):
     return Ms
 
 _spline = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
-    'z = (u-v)*(1-d)*(1-d)*(1-d) + v*(1-d)*(1-d) + (x-y-u-2*v)*(1-d) + y',
+    'z = (u-v)*(1-d)*(1-d)*(1-d) + 3*v*(1-d)*(1-d) + (x-y-u-2*v)*(1-d) + y',
     '_spline')
 
 #############################
