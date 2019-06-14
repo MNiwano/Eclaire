@@ -21,7 +21,11 @@ import numpy    as np
 import cupy     as cp
 import time
 
-__version__ = 0.5
+__version__ = '0.5'
+__update__  = '14 June 2019'
+
+_origin = ('ORIGIN','Eclair v%s %s'%(__version__, __update__),
+           'FITS file originator')
 
 #############################
 #   FitsContainer
@@ -166,7 +170,8 @@ class FitsContainer:
 
             hdu = fits.PrimaryHDU(data.get())
             hdu.header = self.header[f]
-            hdu.header['DATE'] = (now_ut,'Date FITS file was generated')
+            hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
+            hdu.header.append(_origin)
             fits.HDUList(hdu).writeto(o,overwrite=overwrite)
 
 #############################
@@ -458,10 +463,11 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
 
     if header:
         hdu.header = header
-    hdu.header['DATE'] = (now_ut,'Date FITS file was generated')
+    hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
     for i,f in enumerate(list,1):
         hdu.header['IMCMB%03d'%i] = f
     hdu.header['NCOMBINE'] = len(list)
+    hdu.header.append(_origin)
 
     fits.HDUList(hdu).writeto(name,overwrite=overwrite)
 
