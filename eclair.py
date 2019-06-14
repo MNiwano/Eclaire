@@ -19,6 +19,7 @@ from astropy.io import fits
 from itertools  import product
 import numpy    as np
 import cupy     as cp
+import time
 
 __version__ = 0.5
 
@@ -161,8 +162,11 @@ class FitsContainer:
             Raises an IOError if False and the output file exists.
         '''
         for f,o,data in zip(self.list,outlist,self.data):
+            now_ut = time.strftime('%Y/%m/%dT%H:%M:%S',time.gmtime())
+
             hdu = fits.PrimaryHDU(data.get())
             hdu.header = self.header[f]
+            hdu.header['DATE'] = (now_ut,'Date FITS file was generated')
             fits.HDUList(hdu).writeto(o,overwrite=overwrite)
 
 #############################
@@ -417,7 +421,7 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
     combine : {'mean', 'median'}, default 'mean'
         An algorithm to combine images
         'mean' is sigma-clipped mean, 'median' is median (no rejection).
-    header : astropy.io.fits.header, default None
+    header : astropy.io.fits.Header, default None
         A header for output FITS file
     iter : int, default 3
         A number of sigmaclipping iterations
@@ -449,10 +453,12 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
     else:
         combined = func(data,**kwargs)
 
-    hdu = fits.PrimaryHDU(combined.get())
+    now_ut = time.strftime('%Y/%m/%dT%H:%M:%S',time.gmtime())
+    hdu    = fits.PrimaryHDU(combined.get())
 
     if header:
         hdu.header = header
+    hdu.header['DATE'] = (now_ut,'Date FITS file was generated')
     for i,f in enumerate(list,1):
         hdu.header['IMCMB%03d'%i] = f
     hdu.header['NCOMBINE'] = len(list)
