@@ -529,7 +529,7 @@ def _median(data,**kwargs):
 #   fixpix
 #############################
 
-def fixpix(data,mask,range=2):
+def fixpix(data,mask):
     '''
     fill the bad pixel with weighted mean of surrounding pixels
 
@@ -541,36 +541,33 @@ def fixpix(data,mask,range=2):
         An array indicates bad pixel positions
         The shape of mask must be same as image.
         The value of bad pixel is 1, and the others is 0.
-    range : int, default 2
-        A size of area for getting mean
-        If range=2 and data[i,j] is badpixel, 
-        this pixel is filled with weighted mean of pixels
-        that aren't bad, and in the area: data[i-2:i+3,j-2:j+3].
 
     Returns
     -------
     fixed : 3-dimension cupy.ndarray (dtype float32)
         An array of images fixed bad pixel
-
-    Notes
-    -----
-    If all pixels in reference area are bad pixel, the result is 0.
-    Set range according to the density of bad pixels.
     '''
 
-    filt   = (cp.ones_like(mask)-mask)[cp.newaxis,:,:]
-    fixed  = filt * data.copy()
-    dconv  = _convolve(fixed,range)
-    nconv  = _convolve(filt,range)
-    fixed += mask*dconv / (nconv+(nconv==0.0).astype('f4'))
+    tmpm  = mask[cp.newaxis,:,:]
+    ones  = cp.ones_like(tmpm)
+    fixed = data.copy()
+    while tmpm.sum():
+        filt   = ones - tmpm
+        fixed *= filt
+        dconv  = _convolve(fixed)
+        nconv  = _convolve(filt)
+        zeros  = (nconv==0.0).astype('f4')
+        fixed += _fix(tmpm, dconv, nconv, zeros)
+        tmpm   = zeros
 
     return fixed
 
-def _convolve(data,r):
+def _convolve(data):
     n_frames, y_len, x_len = data.shape
-    conv = cp.zeros([n_frames,r*2+y_len,r*2+x_len],dtype='f4')
-    for x,y in product(range(r*2+1),repeat=2):
-        r2 = ((x-r)**2 + (y-r)**2)/(r**2)
-        conv[:,y:y+y_len,x:x+x_len] += np.exp(-r2/2) * data
+    conv = cp.zeros([n_frames,2+y_len,2+x_len],dtype='f4')
+    for x,y in product(range(3),repeat=2):
+        conv[:,y:y+y_len,x:x+x_len] += data
 
-    return conv[:,r:-r,r:-r]
+    return conv[:,1:-1,1:-1]
+
+_fix = cp.ElementwiseKernel('T m, T d, T n, T f','T z','z=m*d/(n+f)','_fix')
