@@ -8,7 +8,7 @@ This module provides some useful classes and functions
 for astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 
-## Requirement
+## Requirements
 * NVIDIA GPU
 * CUDA
 * Below Python modules
