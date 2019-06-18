@@ -20,11 +20,11 @@ If you want to try it, read readme.pdf and use reduction.ipynb and fitsget.ipynb
 
 ## Components
 * **eclair.py**  
-    source file of module
+    a source file of module
 * **readme.pdf**  
-    manual of reduction.ipynb and fitsget.ipynb
+    a manual of reduction.ipynb and fitsget.ipynb
 * **reduction.ipynb**  
-    sample program running on Google Colaboratory for trying Eclair
+    a sample program running on Google Colaboratory for trying Eclair
 * **fitsget.ipynb**  
-    program to get FITS files as test data for running reduction.ipynb
+    a program to get FITS files as test data for running reduction.ipynb
 
