@@ -8,6 +8,8 @@ This module provides some useful classes and functions
 for astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 
+If you want to try it, read 'readme.pdf' and use reduction.ipynb and fitsget.ipynb
+
 ## Requirements
 * NVIDIA GPU
 * CUDA
@@ -25,3 +27,4 @@ and their processing speed is acceralated by using GPU via CUDA.
     program to get FITS files as test data for running reduction.ipynb
 * **readme.pdf**  
     manual of reduction.ipynb and fitsget.ipynb
+
