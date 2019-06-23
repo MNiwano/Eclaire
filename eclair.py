@@ -250,7 +250,7 @@ class ImAlign:
         else:
             raise ValueError('"%s" is not inpremented'%interp)
         
-    def __call__(self,data,shifts,baseidx=None,reject=False,tolerance=None,
+    def __call__(self,data,shifts,reject=False,baseidx=None,tolerance=None,
                  selected=None,progress=lambda *args:None,args=()):
         '''
         Stack the images with aligning their relative positions,
@@ -361,7 +361,7 @@ class ImAlign:
     
         return _spline(u[1:,:],u[:-1,:],data[1:,:],data[:-1,:],d)
 
-def imalign(data,shifts,interp='spline3',baseidx=None,reject=False,
+def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
             tolerance=None,selected=None):
     '''
     Stack the images with aligning their relative positions,
@@ -409,7 +409,7 @@ _spline = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
 #   imcombine
 #############################
 
-def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
+def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
               memsave=False,overwrite=False):
     '''
     Calculate sigma-clipped mean or median (no rejection) of images,
@@ -417,12 +417,13 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
 
     Parameters
     ----------
-    list : array-like
-        A list of names of images combined
     data : 3-dimension cupy.ndarray
         An array of images stacked along the 1st axis
     name : str
         A name of output FITS file
+    list : array-like, default None
+        Names of images combined
+        These are written to the header.
     combine : {'mean', 'median'}, default 'mean'
         An algorithm to combine images
         'mean' is sigma-clipped mean, 'median' is median (no rejection).
@@ -464,9 +465,10 @@ def imcombine(list,data,name,combine='mean',header=None,iter=3,width=3.0,
     if header:
         hdu.header = header
     hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
-    for i,f in enumerate(list,1):
-        hdu.header['IMCMB%03d'%i] = f
-    hdu.header['NCOMBINE'] = len(list)
+    if list:
+        for i,f in enumerate(list,1):
+            hdu.header['IMCMB%03d'%i] = f
+        hdu.header['NCOMBINE'] = len(list)
     hdu.header.append(_origin)
 
     fits.HDUList(hdu).writeto(name,overwrite=overwrite)
@@ -531,7 +533,7 @@ def _median(data,**kwargs):
 
 def fixpix(data,mask):
     '''
-    fill the bad pixel with weighted mean of surrounding pixels
+    fill the bad pixel with mean of surrounding pixels
 
     Parameters
     ----------
