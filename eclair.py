@@ -15,11 +15,13 @@ This module requires
     3. NumPy, Astropy and CuPy
 '''
 
-from astropy.io import fits
 from itertools  import product
+from os.path    import basename
+import time
+
+from astropy.io import fits
 import numpy    as np
 import cupy     as cp
-import time
 
 __version__ = '0.5'
 __update__  = '14 June 2019'
@@ -467,13 +469,13 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
     hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
     if list:
         for i,f in enumerate(list,1):
-            hdu.header['IMCMB%03d'%i] = f
+            hdu.header['IMCMB%03d'%i] = basename(f)
         hdu.header['NCOMBINE'] = len(list)
     hdu.header.append(_origin)
 
     fits.HDUList(hdu).writeto(name,overwrite=overwrite)
 
-    print('%d frames combined -> %s'%(len(list),name))
+    print('Combine: %d frames, Output: %s'%(len(list),name))
 
 def sigclipped_mean(data,iter=3,width=3.0,axis=None):
     '''
