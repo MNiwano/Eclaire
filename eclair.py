@@ -171,7 +171,7 @@ class FitsContainer:
             now_ut = time.strftime('%Y/%m/%dT%H:%M:%S',time.gmtime())
 
             hdu = fits.PrimaryHDU(data.get())
-            hdu.header = self.header[f]
+            hdu.header = self.header[f].copy()
             hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
             hdu.header.append(_origin)
             fits.HDUList(hdu).writeto(o,overwrite=overwrite)
@@ -465,7 +465,7 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
     hdu    = fits.PrimaryHDU(combined.get())
 
     if header:
-        hdu.header = header
+        hdu.header = header.copy()
     hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
     if list:
         for i,f in enumerate(list,1):
