@@ -17,14 +17,15 @@ This module requires
 
 from itertools  import product
 from os.path    import basename
+from warnings   import warn
 import time
 
 from astropy.io import fits
 import numpy    as np
 import cupy     as cp
 
-__version__ = '0.5'
-__update__  = '14 June 2019'
+__version__ = '0.6'
+__update__  = '8 July 2019'
 
 _origin = ('ORIGIN','Eclair v%s %s'%(__version__, __update__),
            'FITS file originator')
@@ -450,9 +451,9 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
     else:
         raise ValueError('"%s" is not defined as algorithm'%combine)
 
+    num, y_len, x_len = data.shape
     kwargs = dict(iter=iter,width=width,axis=0)
     if memsave:
-        y_len, x_len = data.shape[1:]
         yhalf, xhalf = int(y_len/2), int(x_len/2)
         combined = cp.empty([y_len,x_len],dtype='f4')
         slices = tuple((slice(l),slice(l,None)) for l in(yhalf,xhalf))
@@ -468,9 +469,11 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
         hdu.header = header.copy()
     hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
     if list:
+        if len(list) != num:
+            warn('Number of items is different between list and data')
         for i,f in enumerate(list,1):
             hdu.header['IMCMB%03d'%i] = basename(f)
-        hdu.header['NCOMBINE'] = len(list)
+    hdu.header['NCOMBINE'] = num
     hdu.header.append(_origin)
 
     fits.HDUList(hdu).writeto(name,overwrite=overwrite)
