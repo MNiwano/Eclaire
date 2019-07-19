@@ -412,7 +412,7 @@ _spline = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
 #   imcombine
 #############################
 
-def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
+def imcombine(name,data,list=None,combine='mean',header=None,iter=3,width=3.0,
               memsave=False,overwrite=False):
     '''
     Calculate sigma-clipped mean or median (no rejection) of images,
@@ -420,10 +420,10 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
 
     Parameters
     ----------
-    data : 3-dimension cupy.ndarray
-        An array of images stacked along the 1st axis
     name : str
         A name of output FITS file
+    data : 3-dimension cupy.ndarray
+        An array of images stacked along the 1st axis
     list : array-like, default None
         Names of images combined
         These are written to the header.
@@ -513,7 +513,7 @@ def _sigmaclip(data,filt,width,axis):
     norm -= (norm>1).astype('f4')
     sigma = cp.sqrt(_sqm(data,mean,filt,axis=axis)/norm)
 
-    filt  = (width*sigma >= cp.abs(data - mean)).astype('f4')
+    filt  = (width*sigma > cp.abs(data - mean)).astype('f4')
     return filt
 
 def _filteredmean(data,filt,axis):
