@@ -17,7 +17,7 @@ This module requires
 
 from itertools  import product
 from os.path    import basename
-from warnings   import warn
+from warnings   import warn as _warn
 import time
 
 from astropy.io import fits
@@ -470,7 +470,7 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
     hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
     if list:
         if len(list) != num:
-            warn('Number of items is different between list and data')
+            _warn('Number of items is different between list and data')
         for i,f in enumerate(list,1):
             hdu.header['IMCMB%03d'%i] = basename(f)
     hdu.header['NCOMBINE'] = num
@@ -478,7 +478,7 @@ def imcombine(data,name,list=None,combine='mean',header=None,iter=3,width=3.0,
 
     fits.HDUList(hdu).writeto(name,overwrite=overwrite)
 
-    print('Combine: %d frames, Output: %s'%(len(list),name))
+    print('Combine: %d frames, Output: %s'%(num,name))
 
 def sigclipped_mean(data,iter=3,width=3.0,axis=None):
     '''
