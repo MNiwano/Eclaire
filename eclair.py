@@ -444,7 +444,7 @@ def imcombine(name,data,list=None,combine='mean',header=None,iter=3,width=3.0,
         Raises an IOError if False and the output file exists.
     '''
 
-    if   combine == 'mean':
+    if combine == 'mean':
         func = sigclipped_mean
     elif combine == 'median':
         func = _median
@@ -503,34 +503,50 @@ def sigclipped_mean(data,iter=3,width=3.0,axis=None):
     filt = cp.ones_like(data)
     for _ in range(iter):
         filt = _sigmaclip(data,filt,width,axis)
-    mean = _filteredmean(data,filt,axis)
+    mean = _filterdmean(data,filt,axis)
 
     return mean
 
 def _sigmaclip(data,filt,width,axis):
-    mean  = _filteredmean(data,filt,axis)
-    sigma = cp.sqrt(_sqm(data,mean,filt,axis=axis)/cp.sum(filt,axis=axis))
+    mean  = _filterdmean(data,filt,axis)
+    cent  = mean
+    sigma = cp.sqrt(_sqm(data,mean,filt,axis=axis)/filt.sum(axis=axis))
 
-    filt  = (width*sigma > cp.abs(data - mean)).astype('f4')
+    filt  = (width*sigma > cp.abs(data - cent)).astype('f4')
     return filt
 
-def _filteredmean(data,filt,axis):
-    return _sum(data,filt,axis=axis) / cp.sum(filt,axis=axis)
+def _filterdmean(data,filt,axis):
+    return _sum(data,filt,axis=axis) / filt.sum(axis=axis)
+
+def _median(data,**kwargs):
+    filt = cp.ones_like(data)
+    return _filterdmedian(data,filt)
+
+def _filterdmedian(data,filt):
+    _, y_len, x_len = data.shape
+    nums = filt.sum(axis=0)
+    odds = 1-(nums%2)
+
+    tmpf = cp.zeros_like(data)
+    tmpd = _med(data,filt,data.max(axis=0))
+    tmpd.sort(axis=0)
+
+    z1 = cp.ceil(nums/2 - 1).astype(int)
+    x1, y1 = cp.meshgrid(cp.arange(x_len),cp.arange(y_len))
+
+    y2, x2 = cp.where(odds)
+    z2 = z1[y2, x2] + 1
+
+    tmpf[z1.flatten(),y1.flatten(),x1.flatten()] = 1
+    tmpf[z2,y2,x2] = 1
+
+    return _filterdmean(tmpd,tmpf,0)
 
 _sum = cp.ReductionKernel('T x, T f','T y','x*f','a+b','y=a','0','_sum')
 _sqm = cp.ReductionKernel('T x, T m, T f','T y','(x-m)*(x-m)*f','a+b','y=a',
                           '0','_sqm')
+_med = cp.ElementwiseKernel('T x, T f, T m','T z','z = x*f + (1-f)*m','_med')
 
-def _median(data,**kwargs):
-    length = data.shape[0]
-    idx    = int(length/2)
-    sort   = cp.sort(data,axis=0)
-    if length%2 == 0:
-        median = (sort[idx-1,:,:]+sort[idx,:,:]) / 2
-    else:
-        median = sort[idx,:,:]
-
-    return median
 
 #############################
 #   fixpix
