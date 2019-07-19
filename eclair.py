@@ -509,9 +509,7 @@ def sigclipped_mean(data,iter=3,width=3.0,axis=None):
 
 def _sigmaclip(data,filt,width,axis):
     mean  = _filteredmean(data,filt,axis)
-    norm  = cp.sum(filt,axis=axis)
-    norm -= (norm>1).astype('f4')
-    sigma = cp.sqrt(_sqm(data,mean,filt,axis=axis)/norm)
+    sigma = cp.sqrt(_sqm(data,mean,filt,axis=axis)/cp.sum(filt,axis=axis))
 
     filt  = (width*sigma > cp.abs(data - mean)).astype('f4')
     return filt
