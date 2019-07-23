@@ -296,7 +296,7 @@ class ImAlign:
         align : 3-dimension cupy.ndarray (dtype float32)
             An array of images aligned and stacked along the 1st axis
         '''
-        n_frames, y_len, x_len = data.shape
+        nums, y_len, x_len = data.shape
         if (y_len,x_len) != (self.y_len,self.x_len):
             message = 'shape of images is differ from (%d,%d)'
             raise ValueError(message%(self.y_len,self.x_len))
@@ -312,13 +312,13 @@ class ImAlign:
             if all(f!=None for f in (baseidx,tolerance,selected)):
                 norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
                 flags = (norm <= tolerance)
-                n_frames = flags.sum()
+                nums  = flags.sum()
                 selected += list(np.where(flags)[0])
                 iterator = _compress(iterator,flags)
             else:
                 raise ValueError('baseidx or tolerance or selected is invalid')
 
-        align = cp.zeros([n_frames,y_u-y_l+y_len-1,x_u-x_l+x_len-1],dtype='f4')
+        align = cp.zeros([nums,y_u-y_l+y_len-1,x_u-x_l+x_len-1],dtype='f4')
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
             align[i, iy-y_l+1 : iy-y_l+y_len, ix-x_l+1 : ix-x_l+x_len]\
                 = self.shift(layer,dx,dy)
@@ -412,10 +412,59 @@ _spline = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
 #   imcombine
 #############################
 
-def imcombine(name,data,list=None,combine='mean',header=None,iter=3,width=3.0,
-              memsave=False,overwrite=False):
+class _Combine:
+    def __init__(self,combine,center):
+        self.combine = combine
+        self.center  = center
+
+    def main(self,data,iter,width):
+        filt = cp.ones_like(data)
+        for _ in range(iter):
+            filt = self.genfilt(data,filt,width)
+        if self.combine == 'mean':
+            result = self.mean(data,filt)
+        else:
+            result = self.median(data,filt)
+
+        return result
+
+    def genfilt(self,data,filt,width):
+        mean  = self.mean(data,filt)
+        sigma = cp.sqrt(_sqm(data,mean,filt,axis=0)/filt.sum(axis=0))
+        if self.center == 'mean':
+            cent = mean
+        else:
+            cent = self.median(data,filt)
+        filt  = (width*sigma > cp.abs(data - cent)).astype('f4')
+        return filt
+
+    def mean(self,data,filt):
+        return _sum(data,filt,axis=0) / filt.sum(axis=0)
+    
+    def median(self,data,filt):
+        y_len, x_len = data.shape[1:]
+        nums = filt.sum(axis=0)
+        odds = 1-(nums%2)
+
+        tmpf = cp.zeros_like(data)
+        tmpd = _med(data,filt,data.max(axis=0))
+        tmpd.sort(axis=0)
+
+        z1 = cp.ceil(nums/2 - 1).astype(int)
+        x1, y1 = cp.meshgrid(cp.arange(x_len),cp.arange(y_len))
+
+        y2, x2 = cp.where(odds)
+        z2 = z1[y2, x2] + 1
+
+        tmpf[z1.flatten(),y1.flatten(),x1.flatten()] = 1
+        tmpf[z2,y2,x2] = 1
+
+        return self.mean(tmpd,tmpf)
+
+def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
+              iter=3,width=3.0,memsave=False,overwrite=False):
     '''
-    Calculate sigma-clipped mean or median (no rejection) of images,
+    Calculate sigma-clipped mean or median of images,
     and write to FITS file
 
     Parameters
@@ -427,11 +476,12 @@ def imcombine(name,data,list=None,combine='mean',header=None,iter=3,width=3.0,
     list : array-like, default None
         Names of images combined
         These are written to the header.
-    combine : {'mean', 'median'}, default 'mean'
-        An algorithm to combine images
-        'mean' is sigma-clipped mean, 'median' is median (no rejection).
     header : astropy.io.fits.Header, default None
         A header for output FITS file
+    combine : {'mean', 'median'}, default 'mean'
+        An algorithm to combine images
+    center : {'mean', 'median'}, default 'mean'
+        An algorithm to get center value
     iter : int, default 3
         A number of sigmaclipping iterations
     width : int or float, default 3.0
@@ -444,23 +494,20 @@ def imcombine(name,data,list=None,combine='mean',header=None,iter=3,width=3.0,
         Raises an IOError if False and the output file exists.
     '''
 
-    if combine == 'mean':
-        func = sigclipped_mean
-    elif combine == 'median':
-        func = _median
-    else:
-        raise ValueError('"%s" is not defined as algorithm'%combine)
+    for v, k in zip((combine,center),('combine','center')):
+        if v not in ('mean','median'):
+            raise ValueError('"%s" is not impremented as %s'%(v,k))
+    func = _Combine(combine,center).main
 
-    num, y_len, x_len = data.shape
-    kwargs = dict(iter=iter,width=width,axis=0)
+    nums, y_len, x_len = data.shape
     if memsave:
-        yhalf, xhalf = int(y_len/2), int(x_len/2)
+        lengthes = int(y_len/2), int(x_len/2)
         combined = cp.empty([y_len,x_len],dtype='f4')
-        slices = tuple((slice(l),slice(l,None)) for l in(yhalf,xhalf))
+        slices = tuple((slice(l),slice(l,None)) for l in lengthes)
         for yslice, xslice in product(*slices):
-            combined[yslice,xslice] = func(data[:,yslice,xslice],**kwargs)
+            combined[yslice,xslice] = func(data[:,yslice,xslice],iter,width)
     else:
-        combined = func(data,**kwargs)
+        combined = func(data,iter,width)
 
     now_ut = time.strftime('%Y/%m/%dT%H:%M:%S',time.gmtime())
     hdu    = fits.PrimaryHDU(combined.get())
@@ -469,84 +516,21 @@ def imcombine(name,data,list=None,combine='mean',header=None,iter=3,width=3.0,
         hdu.header = header.copy()
     hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
     if list:
-        if len(list) != num:
+        if len(list) != nums:
             _warn('Number of items is different between list and data')
         for i,f in enumerate(list,1):
             hdu.header['IMCMB%03d'%i] = basename(f)
-    hdu.header['NCOMBINE'] = num
+    hdu.header['NCOMBINE'] = nums
     hdu.header.append(_origin)
 
     fits.HDUList(hdu).writeto(name,overwrite=overwrite)
 
-    print('Combine: %d frames, Output: %s'%(num,name))
-
-def sigclipped_mean(data,iter=3,width=3.0,axis=None):
-    '''
-    Calculate sigmaclipped mean of given array
-
-    Parameters
-    ----------
-    data : cupy.ndarray
-    iter : int, default 3
-        A number of sigmaclipping iterations
-    width : int or float, default 3.0
-        A clipping width in sigma units
-    axis : int or tuple, default None
-        Axis or axes along which the means are computed
-        If this is a tuple of ints, a mean is performed over multiple axes.
-
-    Returns
-    -------
-    mean : cupy.ndarray (dtype float32)
-        sigmaclipped mean of "data"
-    '''
-    filt = cp.ones_like(data)
-    for _ in range(iter):
-        filt = _sigmaclip(data,filt,width,axis)
-    mean = _filterdmean(data,filt,axis)
-
-    return mean
-
-def _sigmaclip(data,filt,width,axis):
-    mean  = _filterdmean(data,filt,axis)
-    cent  = mean
-    sigma = cp.sqrt(_sqm(data,mean,filt,axis=axis)/filt.sum(axis=axis))
-
-    filt  = (width*sigma > cp.abs(data - cent)).astype('f4')
-    return filt
-
-def _filterdmean(data,filt,axis):
-    return _sum(data,filt,axis=axis) / filt.sum(axis=axis)
-
-def _median(data,**kwargs):
-    filt = cp.ones_like(data)
-    return _filterdmedian(data,filt)
-
-def _filterdmedian(data,filt):
-    _, y_len, x_len = data.shape
-    nums = filt.sum(axis=0)
-    odds = 1-(nums%2)
-
-    tmpf = cp.zeros_like(data)
-    tmpd = _med(data,filt,data.max(axis=0))
-    tmpd.sort(axis=0)
-
-    z1 = cp.ceil(nums/2 - 1).astype(int)
-    x1, y1 = cp.meshgrid(cp.arange(x_len),cp.arange(y_len))
-
-    y2, x2 = cp.where(odds)
-    z2 = z1[y2, x2] + 1
-
-    tmpf[z1.flatten(),y1.flatten(),x1.flatten()] = 1
-    tmpf[z2,y2,x2] = 1
-
-    return _filterdmean(tmpd,tmpf,0)
+    print('Combine: %d frames, Output: %s'%(nums,name))
 
 _sum = cp.ReductionKernel('T x, T f','T y','x*f','a+b','y=a','0','_sum')
 _sqm = cp.ReductionKernel('T x, T m, T f','T y','(x-m)*(x-m)*f','a+b','y=a',
                           '0','_sqm')
 _med = cp.ElementwiseKernel('T x, T f, T m','T z','z = x*f + (1-f)*m','_med')
-
 
 #############################
 #   fixpix
@@ -572,10 +556,9 @@ def fixpix(data,mask):
     '''
 
     tmpm  = mask[cp.newaxis,:,:]
-    ones  = cp.ones_like(tmpm)
     fixed = data.copy()
     while tmpm.sum():
-        filt   = ones - tmpm
+        filt   = 1 - tmpm
         fixed *= filt
         dconv  = _convolve(fixed)
         nconv  = _convolve(filt)
@@ -586,8 +569,8 @@ def fixpix(data,mask):
     return fixed
 
 def _convolve(data):
-    n_frames, y_len, x_len = data.shape
-    conv = cp.zeros([n_frames,2+y_len,2+x_len],dtype='f4')
+    nums, y_len, x_len = data.shape
+    conv = cp.zeros([nums,2+y_len,2+x_len],dtype='f4')
     for x,y in product(range(3),repeat=2):
         conv[:,y:y+y_len,x:x+x_len] += data
 
