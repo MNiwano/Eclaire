@@ -24,6 +24,9 @@ from astropy.io import fits
 import numpy    as np
 import cupy     as cp
 
+EK = cp.ElementwiseKernel
+RK = cp.ReductionKernel
+
 __version__ = '0.7'
 __update__  = '23 July 2019'
 
@@ -201,8 +204,7 @@ def reduction(image,bias,dark,flat):
 
     return _red(image,bias,dark,flat)
 
-_red = cp.ElementwiseKernel('T x, T b, T d, T f', 'T z', 'z = (x - b - d) / f',
-    '_red')
+_red = EK('T x, T b, T d, T f', 'T z', 'z = (x - b - d) / f', '_red')
 
 #############################
 #   imalign
@@ -399,9 +401,9 @@ def _Ms(ax_len):
 
     return Ms
 
-_lin = cp.ElementwiseKernel('T x1, T x2, T x3, T x4, T dx, T dy','T z',
+_lin = EK('T x1, T x2, T x3, T x4, T dx, T dy','T z',
     'z= dx*dy*x1 + dx*(1-dy)*x2 + (1-dx)*dy*x3 + (1-dx)*(1-dy)*x4','_linear')
-_spl = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
+_spl = EK('T u, T v, T x, T y, T d','T z',
     'z = (u-v)*(1-d)*(1-d)*(1-d) + 3*v*(1-d)*(1-d) + (x-y-u-2*v)*(1-d) + y',
     '_spline')
 
@@ -524,16 +526,15 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
 
     print('Combine: %d frames, Output: %s'%(nums,name))
 
-_sum = cp.ReductionKernel('T x, T f','T y','x*f','a+b','y=a','0','_sum')
-_sqm = cp.ReductionKernel('T x, T m, T f','T y','(x-m)*(x-m)*f','a+b','y=a',
-                          '0','_sqm')
-_med = cp.ElementwiseKernel('T x, T f, T m','T z','z = x*f + (1-f)*m','_med')
+_sum = RK('T x, T f','T y','x*f','a+b','y=a','0','_sum')
+_sqm = RK('T x, T m, T f','T y','(x-m)*(x-m)*f','a+b','y=a','0','_sqm')
+_med = EK('T x, T f, T m','T z','z = x*f + (1-f)*m','_med')
 
 #############################
 #   fixpix
 #############################
 
-def fixpix(data,mask):
+def fixpix(data,mask,memsave=False):
     '''
     fill the bad pixel with mean of surrounding pixels
 
@@ -545,6 +546,8 @@ def fixpix(data,mask):
         An array indicates bad pixel positions
         The shape of mask must be same as image.
         The value of bad pixel is 1, and the others is 0.
+    memsave : bool, default False
+        If True, input data is overwrited, but VRAM is saved.
 
     Returns
     -------
@@ -553,7 +556,10 @@ def fixpix(data,mask):
     '''
 
     tmpm  = mask[cp.newaxis,:,:]
-    fixed = data.copy()
+    if memsave:
+        fixed = data.view()
+    else:
+        fixed = data.copy()
     while tmpm.sum():
         filt   = 1 - tmpm
         fixed *= filt
@@ -573,4 +579,4 @@ def _convolve(data):
 
     return conv[:,1:-1,1:-1]
 
-_fix = cp.ElementwiseKernel('T m, T d, T n, T f','T z','z=m*d/(n+f)','_fix')
+_fix = EK('T m, T d, T n, T f','T z','z=m*d/(n+f)','_fix')
