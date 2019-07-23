@@ -24,8 +24,8 @@ from astropy.io import fits
 import numpy    as np
 import cupy     as cp
 
-__version__ = '0.6'
-__update__  = '8 July 2019'
+__version__ = '0.7'
+__update__  = '23 July 2019'
 
 _origin = ('ORIGIN','Eclair v%s %s'%(__version__, __update__),
            'FITS file originator')
@@ -77,7 +77,7 @@ class FitsContainer:
 
     def __getitem__(self,key):
         '''
-        You can access the items of instances like dict. (i.e. self[key])
+        self.__getitem__(key) <==> self[key]
 
         Parameters
         ----------
@@ -199,10 +199,10 @@ def reduction(image,bias,dark,flat):
     result : cupy.ndarray
     '''
 
-    return _reduction_kernel(image,bias,dark,flat)
+    return _red(image,bias,dark,flat)
 
-_reduction_kernel = cp.ElementwiseKernel('T x, T b, T d, T f', 'T z',
-                                  'z = (x - b - d) / f', '_reduction_kernel')
+_red = cp.ElementwiseKernel('T x, T b, T d, T f', 'T z', 'z = (x - b - d) / f',
+    '_red')
 
 #############################
 #   imalign
@@ -256,6 +256,8 @@ class ImAlign:
     def __call__(self,data,shifts,reject=False,baseidx=None,tolerance=None,
                  selected=None,progress=lambda *args:None,args=()):
         '''
+        self.__call__(*args,**kwargs) <==> self(*args,**kwargs)
+
         Stack the images with aligning their relative positions,
         and cut out the overstretched area
 
@@ -327,14 +329,7 @@ class ImAlign:
         return align[:, y_u-y_l : y_len, x_u-x_l : x_len]
 
     def __linear(self,data,dx,dy):
-        stack = cp.empty([4,self.y_len-1,self.x_len-1],dtype='f4')
-
-        stack[0,:,:] = dx     * dy     * data[ :-1, :-1]
-        stack[1,:,:] = dx     * (1-dy) * data[1:  , :-1]
-        stack[2,:,:] = (1-dx) * dy     * data[ :-1,1:  ]
-        stack[3,:,:] = (1-dx) * (1-dy) * data[1:  ,1:  ]
-
-        return stack.sum(axis=0)
+        return _lin(data[:-1,:-1],data[1:,:-1],data[:-1,1:],data[1:,1:],dx,dy)
     
     def __poly(self,data,dx,dy):
         x_len = self.x_len-3
@@ -362,7 +357,7 @@ class ImAlign:
         u = cp.zeros_like(data)
         u[1:-1,:] = cp.dot(self.mat[axis],v)
     
-        return _spline(u[1:,:],u[:-1,:],data[1:,:],data[:-1,:],d)
+        return _spl(u[1:,:],u[:-1,:],data[1:,:],data[:-1,:],d)
 
 def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
             tolerance=None,selected=None):
@@ -404,7 +399,9 @@ def _Ms(ax_len):
 
     return Ms
 
-_spline = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
+_lin = cp.ElementwiseKernel('T x1, T x2, T x3, T x4, T dx, T dy','T z',
+    'z= dx*dy*x1 + dx*(1-dy)*x2 + (1-dx)*dy*x3 + (1-dx)*(1-dy)*x4','_linear')
+_spl = cp.ElementwiseKernel('T u, T v, T x, T y, T d','T z',
     'z = (u-v)*(1-d)*(1-d)*(1-d) + 3*v*(1-d)*(1-d) + (x-y-u-2*v)*(1-d) + y',
     '_spline')
 
@@ -432,7 +429,7 @@ class _Combine:
         mean  = self.mean(data,filt)
         sigma = cp.sqrt(_sqm(data,mean,filt,axis=0)/filt.sum(axis=0))
         if self.center == 'mean':
-            cent = mean
+            cent = mean.view()
         else:
             cent = self.median(data,filt)
         filt  = (width*sigma > cp.abs(data - cent)).astype('f4')
