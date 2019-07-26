@@ -30,6 +30,8 @@ RK = cp.ReductionKernel
 __version__ = '0.7'
 __update__  = '23 July 2019'
 
+dtype = np.float32
+
 _origin = ('ORIGIN','Eclair v%s %s'%(__version__, __update__),
            'FITS file originator')
 
@@ -136,7 +138,7 @@ class FitsContainer:
             y_len, x_len = data.shape
 
             self.header = {self.list[0]: head}
-            self.data   = cp.empty([n,y_len,x_len],dtype='f4')
+            self.data   = cp.empty([n,y_len,x_len],dtype=dtype)
             self.data[0,:,:] = data
             progress(0,*args)
             for i,f in enumerate(self.list[1:],1):
@@ -155,8 +157,7 @@ class FitsContainer:
                 head['CRPIX2'] -= self.slice[0].start
             except KeyError:
                 pass
-
-            data = cp.array(img[0].data[self.slice].astype('f4'))
+            data = cp.array(img[0].data[self.slice].astype(dtype))
         return head, data
 
     def write(self,outlist,overwrite=False):
@@ -297,7 +298,7 @@ class ImAlign:
 
         Returns
         -------
-        align : 3-dimension cupy.ndarray (dtype float32)
+        align : 3-dimension cupy.ndarray
             An array of images aligned and stacked along the 1st axis
         '''
         nums, y_len, x_len = data.shape
@@ -322,7 +323,7 @@ class ImAlign:
             else:
                 raise ValueError('baseidx or tolerance or selected is invalid')
 
-        align = cp.zeros([nums,y_u-y_l+y_len-1,x_u-x_l+x_len-1],dtype='f4')
+        align = cp.zeros([nums,y_u-y_l+y_len-1,x_u-x_l+x_len-1],dtype=dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
             align[i, iy-y_l+1 : iy-y_l+y_len, ix-x_l+1 : ix-x_l+x_len]\
                 = self.shift(layer,dx,dy)
@@ -339,8 +340,8 @@ class ImAlign:
 
         shifted = self.__linear(data,dx,dy)
 
-        shift_vector = cp.empty([16],dtype='f4')
-        stack = cp.empty([16,y_len,x_len],dtype='f4')
+        shift_vector = cp.empty([16],dtype=dtype)
+        stack = cp.empty([16,y_len,x_len],dtype=dtype)
         for i, j in product(range(4),repeat=2):
             shift_vector[i*4+j] = (1-dx)**(3-i) * (1-dy)**(3-j)
             stack[i*4+j,:,:]  = data[i:i+y_len,j:j+x_len]
@@ -386,7 +387,7 @@ def _compress(data, selectors):
             yield d
 
 def _Mp():
-    Mp = np.empty([16,16],dtype='f4')
+    Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
         Mp[y*4+x,k*4+l] = (x-1)**(3-k) * (y-1)**(3-l)
     Mp = cp.linalg.inv(cp.array(Mp))
@@ -394,9 +395,9 @@ def _Mp():
     return Mp
 
 def _Ms(ax_len):
-    Ms = 4 * np.identity(ax_len-2,dtype='f4')
-    Ms[1:  , :-1] += np.identity(ax_len-3,dtype='f4')
-    Ms[ :-1,1:  ] += np.identity(ax_len-3,dtype='f4')
+    Ms = 4 * np.identity(ax_len-2,dtype=dtype)
+    Ms[1:  , :-1] += np.identity(ax_len-3,dtype=dtype)
+    Ms[ :-1,1:  ] += np.identity(ax_len-3,dtype=dtype)
     Ms = cp.linalg.inv(cp.array(Ms))
 
     return Ms
@@ -434,7 +435,7 @@ class _Combine:
             cent = mean.view()
         else:
             cent = self.median(data,filt)
-        filt  = (width*sigma > cp.abs(data - cent)).astype('f4')
+        filt  = _clp(data,cent,sigma,width)
         return filt
 
     def mean(self,data,filt):
@@ -501,7 +502,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
     nums, y_len, x_len = data.shape
     if memsave:
         lengthes = int(y_len/2), int(x_len/2)
-        combined = cp.empty([y_len,x_len],dtype='f4')
+        combined = cp.empty([y_len,x_len],dtype=dtype)
         slices = tuple((slice(l),slice(l,None)) for l in lengthes)
         for yslice, xslice in product(*slices):
             combined[yslice,xslice] = func(data[:,yslice,xslice],iter,width)
@@ -529,6 +530,8 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
 _sum = RK('T x, T f','T y','x*f','a+b','y=a','0','_sum')
 _sqm = RK('T x, T m, T f','T y','(x-m)*(x-m)*f','a+b','y=a','0','_sqm')
 _med = EK('T x, T f, T m','T z','z = x*f + (1-f)*m','_med')
+_clp = EK('T d, T c, T s, T w','T z',
+   'if (fabsf(d-c) <= w*s) {z = 1.0;} else {z = 0.0;}','_clp')
 
 #############################
 #   fixpix
@@ -565,7 +568,7 @@ def fixpix(data,mask,memsave=False):
         fixed *= filt
         dconv  = _convolve(fixed)
         nconv  = _convolve(filt)
-        zeros  = (nconv==0.0).astype('f4')
+        zeros  = _jdg(nconv)
         fixed += _fix(tmpm, dconv, nconv, zeros)
         tmpm   = zeros
 
@@ -573,10 +576,11 @@ def fixpix(data,mask,memsave=False):
 
 def _convolve(data):
     nums, y_len, x_len = data.shape
-    conv = cp.zeros([nums,2+y_len,2+x_len],dtype='f4')
+    conv = cp.zeros([nums,2+y_len,2+x_len],dtype=dtype)
     for x,y in product(range(3),repeat=2):
         conv[:,y:y+y_len,x:x+x_len] += data
 
     return conv[:,1:-1,1:-1]
 
+_jdg = EK('T x','T z','if (x==0.0) {z=1.0;} else {z=0.0;}','_jdg')
 _fix = EK('T m, T d, T n, T f','T z','z=m*d/(n+f)','_fix')
