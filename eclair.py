@@ -322,8 +322,8 @@ class ImAlign:
                 iterator = _compress(iterator,flags)
             else:
                 raise ValueError('baseidx or tolerance or selected is invalid')
-
-        align = cp.zeros([nums,y_u-y_l+y_len-1,x_u-x_l+x_len-1],dtype=dtype)
+        
+        align = cp.zeros([nums,y_u-y_l+y_len,x_u-x_l+x_len],dtype=dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
             align[i, iy-y_l+1 : iy-y_l+y_len, ix-x_l+1 : ix-x_l+x_len]\
                 = self.shift(layer,dx,dy)
@@ -412,15 +412,24 @@ _spl = EK('T u, T v, T x, T y, T d','T z',
 #   imcombine
 #############################
 
-class _Combine:
-    def __init__(self,combine,center):
+class _SigClip:
+    def __init__(self,combine='mean',center='mean',axis=0,returnfilt=False):
         self.combine = combine
         self.center  = center
+        self.axis    = axis
+        self.rtnfilt = returnfilt
 
-    def main(self,data,iter,width):
-        filt = cp.ones_like(data)
+    def __call__(self,data,iter,width,filter=None):
+        if filter is None:
+            filt = cp.ones_like(data)
+        else:
+            filt = filter
         for _ in range(iter):
             filt = self.genfilt(data,filt,width)
+
+        if self.rtnfilt:
+            return filt
+
         if self.combine == 'mean':
             result = self.mean(data,filt)
         else:
@@ -429,17 +438,24 @@ class _Combine:
         return result
 
     def genfilt(self,data,filt,width):
-        mean  = self.mean(data,filt)
-        sigma = cp.sqrt(_sqm(data,mean,filt,axis=0)/filt.sum(axis=0))
+        mean  = self.mean(data,filt,keepdims=True)
+        sigma = self.sigma(data,mean,filt)
         if self.center == 'mean':
             cent = mean.view()
         else:
             cent = self.median(data,filt)
-        filt  = _clp(data,cent,sigma,width)
+        filt *= _clp(data,cent,sigma,width)
         return filt
+    
+    def sigma(self,data,mean,filt):
+        sqm = _sqm(data,mean,filt,axis=self.axis,keepdims=True)
+        num = filt.sum(axis=self.axis,keepdims=True)
+        return cp.sqrt(sqm/num)
 
-    def mean(self,data,filt):
-        return _sum(data,filt,axis=0) / filt.sum(axis=0)
+    def mean(self,data,filt,keepdims=False):
+        sum = _sum(data,filt,axis=self.axis,keepdims=keepdims)
+        num = filt.sum(axis=self.axis,keepdims=keepdims)
+        return sum/num
     
     def median(self,data,filt):
         y_len, x_len = data.shape[1:]
@@ -462,7 +478,7 @@ class _Combine:
         return self.mean(tmpd,tmpf)
 
 def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
-              iter=3,width=3.0,memsave=False,overwrite=False):
+              iter=3,width=3.0,filter=None,memsave=False,overwrite=False):
     '''
     Calculate sigma-clipped mean or median of images,
     and write to FITS file
@@ -497,7 +513,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
     for v, k in zip((combine,center),('combine','center')):
         if v not in ('mean','median'):
             raise ValueError('"%s" is not impremented as %s'%(v,k))
-    func = _Combine(combine,center).main
+    sigclip = _SigClip(combine,center)
 
     nums, y_len, x_len = data.shape
     if memsave:
@@ -505,9 +521,15 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         combined = cp.empty([y_len,x_len],dtype=dtype)
         slices = tuple((slice(l),slice(l,None)) for l in lengthes)
         for yslice, xslice in product(*slices):
-            combined[yslice,xslice] = func(data[:,yslice,xslice],iter,width)
+            if filter is None:
+                filt = None
+            else:
+                filt = filter[:,yslice,xslice]
+            combined[yslice,xslice] = sigclip(
+                data[:,yslice,xslice],iter,width,filter=filt
+            )
     else:
-        combined = func(data,iter,width)
+        combined = sigclip(data,iter,width,filter=filter)
 
     now_ut = time.strftime('%Y/%m/%dT%H:%M:%S',time.gmtime())
     hdu    = fits.PrimaryHDU(combined.get())
@@ -557,7 +579,7 @@ def fixpix(data,mask,memsave=False):
     fixed : 3-dimension cupy.ndarray (dtype float32)
         An array of images fixed bad pixel
     '''
-
+    
     tmpm  = mask[cp.newaxis,:,:]
     if memsave:
         fixed = data.view()
