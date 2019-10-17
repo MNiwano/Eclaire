@@ -8,6 +8,7 @@ from param  import dtype
 from kernel import (
     judge_kernel,
     fix_kernel,
+    conv_kernel,
 )
 
 #############################
@@ -52,9 +53,12 @@ def fixpix(data,mask,memsave=False):
     return fixed
 
 def convolve(data):
-    nums, y_len, x_len = data.shape
-    conv = cp.zeros([nums,2+y_len,2+x_len],dtype=dtype)
-    for x,y in product(range(3),repeat=2):
-        conv[:,y:y+y_len,x:x+x_len] += data
-
+    nums, y_len0, x_len0 = data.shape
+    xy_len = x_len0 * y_len0
+    x_len1 = x_len0 + 2
+    y_len1 = y_len0 + 2
+    conv = cp.empty([nums,y_len1,x_len1],dtype=dtype)
+    
+    conv_kernel(data,x_len0,y_len0,x_len1,y_len1,xy_len,conv)
+    
     return conv[:,1:-1,1:-1]
