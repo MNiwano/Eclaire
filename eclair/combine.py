@@ -13,11 +13,11 @@ import cupy     as cp
 from param import dtype, origin
 
 from kernel import (
-    sum_kernel,
-    sqm_kernel,
+    filterdsum_kernel,
+    filterdstd_kernel,
     median_kernel,
     clip_kernel,
-    judge_kernel,
+    replace_kernel,
 )
 
 #############################
@@ -33,7 +33,7 @@ class SigClip:
 
     def __call__(self,data,iter=3,width=3.0,filter=None):
         if filter is None:
-            filt = cp.ones_like(data)
+            filt = cp.ones_like(data,dtype=dtype)
         else:
             filt = filter
 
@@ -57,19 +57,21 @@ class SigClip:
             cent = mean.view()
         else:
             cent = self.median(data,filt)
-        filt *= clip_kernel(data,cent,sigma,width)
+        
+        clip_kernel(data,filt,cent,sigma,width,filt)
+        
         return filt
     
     def sigma(self,data,mean,filt):
-        sqm = sqm_kernel(data,mean,filt,axis=self.axis,keepdims=True)
         num = filt.sum(axis=self.axis,keepdims=True)
-        num += judge_kernel(num)
+        replace_kernel(num,1,num)
+        sqm = filterdstd_kernel(data,mean,filt,axis=self.axis,keepdims=True)
         return cp.sqrt(sqm/num)
 
     def mean(self,data,filt,keepdims=False):
-        sum = sum_kernel(data,filt,axis=self.axis,keepdims=keepdims)
         num = filt.sum(axis=self.axis,keepdims=keepdims)
-        num += judge_kernel(num)
+        replace_kernel(num,1,num)
+        sum = filterdsum_kernel(data,filt,axis=self.axis,keepdims=keepdims)
         return sum/num
     
     def median(self,data,filt):
@@ -77,7 +79,7 @@ class SigClip:
         nums = filt.sum(axis=0)
         even = 1-(nums%2)
 
-        tmpf = cp.zeros_like(data)
+        tmpf = cp.zeros_like(data,dtype=dtype)
         tmpd = median_kernel(data,filt,data.max(axis=0))
         tmpd.sort(axis=0)
 
@@ -87,7 +89,7 @@ class SigClip:
         y2, x2 = np.where(even.get())
         z2 = z1[y2, x2] + 1
 
-        tmpf[z1.flatten(),y1.flatten(),x1.flatten()] = 1
+        tmpf[z1.ravel(),y1.ravel(),x1.ravel()] = 1
         tmpf[z2,y2,x2] = 1
 
         return self.mean(tmpd,tmpf)

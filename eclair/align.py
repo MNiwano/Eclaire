@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 
 from itertools  import product
@@ -8,7 +9,8 @@ import cupy  as cp
 from param import dtype
 
 from kernel import (
-    liner_kernel,
+    neighbor_kernel,
+    linear_kernel,
     spline_kernel,
 )
 
@@ -25,39 +27,44 @@ class ImAlign:
     ----------
     x_len, y_len : int
         Shape of images to align
-    interp : {'spline3', 'poly3', 'linear'}, default 'spline3'
+    interp : {'spline3', 'poly3', 'linear', 'neighbor'}
         Subpixel interpolation algorithm in subpixel image shift
-         spline3 - 3rd order spline interpolation
-         poly3   - 3rd order polynomial interpolation
-         linear  - linear interpolation
+         spline3  - 3rd order spline interpolation
+         poly3    - 3rd order polynomial interpolation
+         linear   - linear interpolation
+         neighbor - nearest neighbor
     '''
-    def __init__(self,x_len,y_len,interp='spline3'):
+    
+    def __init__(self,x_len,y_len,interp='spline3',dtype=dtype):
         '''
         Parameters
         ----------
         x_len, y_len : int
             Shape of images to align
-        interp : {'spline3', 'poly3', 'linear'}, default 'spline3'
+        interp : {'spline3', 'poly3', 'linear', 'neighbor'}, default 'spline3'
             Subpixel interpolation algorithm in subpixel image shift
-             spline3 - 3rd order spline interpolation
-             poly3   - 3rd order polynomial interpolation
-             linear  - linear interpolation
+             spline3 - bicubic spline
+             poly3   - 3rd order interior polynomial
+             linear  - bilinear
+             neighbor - nearest neighbor
         '''
         self.x_len  = x_len
         self.y_len  = y_len
         self.interp = interp
         if   interp == 'spline3':
             self.shift = self.__spline
-            self.mat = {'x':Ms(x_len)}
+            self.matx = Ms(x_len)
             if y_len == x_len:
-                self.mat['y'] = self.mat['x'].view()
+                self.maty = self.matx.view()
             else:
-                self.mat['y'] = Ms(y_len)
+                self.maty = Ms(y_len)
         elif interp == 'poly3':
             self.shift = self.__poly
             self.mat = Mp()
         elif interp == 'linear':
             self.shift = self.__linear
+        elif interp == 'neighbor':
+            self.shift = self.__neighbor
         else:
             raise ValueError('"%s" is not inpremented'%interp)
         
@@ -90,7 +97,7 @@ class ImAlign:
         tolerance : int or float, default None
             Maximum distance from base image, in units of pixel
             If you set reject True, set also this parameter.
-        selected : variable referencing empty list, default None
+        selected : variable referencing list object, default None
             List for storing indices of selected images
             If you set reject True, set also this parameter.
         progress : function, default lambda *args:None
@@ -110,41 +117,51 @@ class ImAlign:
         if (y_len,x_len) != (self.y_len,self.x_len):
             message = 'shape of images is differ from (%d,%d)'
             raise ValueError(message%(self.y_len,self.x_len))
+        if nums != len(shifts):
+            raise ValueError('data and shifts do not match')
 
-        x_u, y_u = np.ceil(shifts.max(axis=0)).astype('int')
-        x_l, y_l = np.floor(shifts.min(axis=0)).astype('int')
+        lowlim = np.floor(shifts.min(axis=0))
+
+        shifts = shifts - lowlim
+        x_u,y_u = np.floor(shifts.max(axis=0)).astype('int')
     
         xy_i = np.floor(shifts).astype('int')
         xy_d = shifts - xy_i
 
         iterator = zip(xy_i,xy_d,data)
         if reject:
-            if all(f!=None for f in (baseidx,tolerance,selected)):
+            if isinstance(baseidx,int):
+                raise ValueError('baseidx is invalid')
+            elif isinstance(tolerance,(int,float)):
+                raise ValueError('tolerance is invalid')
+            elif isinstance(selected,list):
+                raise ValueError('selected is invalid')
+            else:
                 norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
                 flags = (norm <= tolerance)
                 nums  = flags.sum()
                 selected += list(np.where(flags)[0])
-                iterator = compress(iterator,flags)
-            else:
-                raise ValueError('baseidx or tolerance or selected is invalid')
-        
-        align = cp.zeros([nums,y_u-y_l+y_len,x_u-x_l+x_len],dtype=dtype)
+                iterator = (i for i,f in zip(iterator,flags) if f)
+                
+        aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
-            align[i, iy-y_l+1 : iy-y_l+y_len, ix-x_l+1 : ix-x_l+x_len]\
-                = self.shift(layer,dx,dy)
+            aligned[i] = self.shift(layer,dx,dy)[
+                y_u-iy : y_len-iy,
+                x_u-ix : x_len-ix
+            ]
             progress(i,*args)
 
-        return align[:, y_u-y_l : y_len, x_u-x_l : x_len]
+        return aligned
+
+    def __neighbor(self,data,dx,dy):
+        shifted = cp.empty_like(data,dtype=dtype)
+        neighbor_kernel(data,dx,dy,self.x_len,shifted)
+        return shifted
 
     def __linear(self,data,dx,dy):
-        return liner_kernel(
-            data[:-1,:-1],
-            data[1:,:-1],
-            data[:-1,1:],
-            data[1:,1:],
-            dx,
-            dy
-        )
+        shifted = self.__neighbor(data,dx,dy)
+        linear_kernel(data,dx,dy,self.x_len,shifted[1:,1:])
+        return shifted
     
     def __poly(self,data,dx,dy):
         x_len = self.x_len-3
@@ -155,24 +172,26 @@ class ImAlign:
         shift_vector = cp.empty([16],dtype=dtype)
         stack = cp.empty([16,y_len,x_len],dtype=dtype)
         for i, j in product(range(4),repeat=2):
-            shift_vector[i*4+j] = (1-dx)**(3-i) * (1-dy)**(3-j)
+            shift_vector[i*4+j] = (1-dx)**i * (1-dy)**j
             stack[i*4+j,:,:]  = data[i:i+y_len,j:j+x_len]
 
         tmpmat = cp.dot(shift_vector,self.mat)
-        shifted[1:-1,1:-1] = cp.tensordot(tmpmat,stack,1)
+        shifted[2:-1,2:-1] = cp.tensordot(tmpmat,stack,1)
 
         return shifted
 
     def __spline(self,data,dx,dy):
-        tmpd = self.__spline1d(data.T,dx,'x')
-        return self.__spline1d(tmpd.T,dy,'y')
+        shifted = self.__neighbor(data,dx,dy)
+        tmpd = cp.empty([self.x_len-1,self.y_len],dtype=dtype)
+        self.__spline1d(data.T,dx,self.matx,tmpd)
+        self.__spline1d(tmpd.T,dy,self.maty,shifted[1:,1:])
+        return shifted
 
-    def __spline1d(self,data,d,axis):
+    def __spline1d(self,data,d,mat,out):
         v = data[2:,:]+data[:-2,:]-2*data[1:-1,:]
-        u = cp.zeros_like(data)
-        u[1:-1,:] = cp.dot(self.mat[axis],v)
-    
-        return spline_kernel(u[1:,:],u[:-1,:],data[1:,:],data[:-1,:],d)
+        u = cp.zeros_like(data,dtype=dtype)
+        cp.dot(mat,v,out=u[1:-1,:])
+        spline_kernel(u,data,1-d,out.shape[-1],out)
 
 def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
             tolerance=None,selected=None):
@@ -193,16 +212,11 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
     return func(data,shifts,baseidx=baseidx,reject=reject,
                 tolerance=tolerance,selected=selected)
 
-def compress(data, selectors):
-    for d, s in zip(data,selectors):
-        if s:
-            yield d
-
 def Mp():
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
-        Mp[y*4+x,k*4+l] = (x-1)**(3-k) * (y-1)**(3-l)
-    Mp = cp.linalg.inv(cp.array(Mp))
+        Mp[y*4+x,k*4+l] = (x-1)**k * (y-1)**l
+    Mp = cp.array(np.linalg.inv(Mp))
 
     return Mp
 
@@ -210,6 +224,6 @@ def Ms(ax_len):
     Ms = 4 * np.identity(ax_len-2,dtype=dtype)
     Ms[1:  , :-1] += np.identity(ax_len-3,dtype=dtype)
     Ms[ :-1,1:  ] += np.identity(ax_len-3,dtype=dtype)
-    Ms = cp.linalg.inv(cp.array(Ms))
+    Ms = cp.array(np.linalg.inv(Ms))
 
     return Ms

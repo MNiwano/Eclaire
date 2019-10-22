@@ -15,9 +15,12 @@ This module requires
     3. NumPy, Astropy and CuPy
 '''
 
+__all__ = ['reduction', 'FitsContainer', 'ImAlign',
+    'imalign', 'imcombine', 'fixpix']
+
 from param import __version__
 
-from kernel import reduction_kernel as _red
+from kernel import reduction_kernel as _reduction
 
 from fitscontainer import FitsContainer
 
@@ -27,7 +30,7 @@ from combine import imcombine
 
 from fix import fixpix
 
-def reduction(image,bias,dark,flat):
+def reduction(image,bias,dark,flat,out=None):
     '''
     This function is equal to the equation:
     result = (image - bias - dark) / flat, but needs less memory.
@@ -44,5 +47,9 @@ def reduction(image,bias,dark,flat):
     -------
     result : cupy.ndarray
     '''
+    if out is None:
+        result = _reduction(image,bias,dark,flat)
+    else:
+        result = _reduction(image,bias,dark,flat,out)
 
-    return _red(image,bias,dark,flat)
+    return result

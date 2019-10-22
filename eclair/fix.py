@@ -32,33 +32,37 @@ def fixpix(data,mask,memsave=False):
 
     Returns
     -------
-    fixed : 3-dimension cupy.ndarray (dtype float32)
+    fixed : 3-dimension cupy.ndarray
         An array of images fixed bad pixel
     '''
-    
-    tmpm  = mask[cp.newaxis,:,:]
+    y_len1, x_len1 = data.shape[1:]
+    y_len2, x_len2 = mask.shape
+    if y_len1!=y_len2 or x_len1!=x_len2:
+        raise ValueError('shape differs between data and mask')
+
+    tmpm = mask[cp.newaxis,:,:]
     if memsave:
         fixed = data.view()
     else:
         fixed = data.copy()
     while tmpm.sum():
-        filt   = 1 - tmpm
-        fixed *= filt
-        dconv  = convolve(fixed)
-        nconv  = convolve(filt)
-        zeros  = judge_kernel(nconv)
-        fixed += fix_kernel(tmpm, dconv, nconv, zeros)
-        tmpm   = zeros
+        filt  = 1 - tmpm
+        dconv = convolve(fixed,filt)
+        nconv = convolve(filt,1.0)
+        zeros = judge_kernel(nconv)
+        fix_kernel(fixed, tmpm, dconv, nconv, zeros, fixed)
+        tmpm  = zeros
 
     return fixed
 
-def convolve(data):
+def convolve(data,filt):
     nums, y_len0, x_len0 = data.shape
-    xy_len = x_len0 * y_len0
     x_len1 = x_len0 + 2
     y_len1 = y_len0 + 2
-    conv = cp.empty([nums,y_len1,x_len1],dtype=dtype)
+    xy_len = x_len0 * y_len0
+
+    conv = cp.zeros([nums,y_len1,x_len1],dtype=dtype)
     
-    conv_kernel(data,x_len0,y_len0,x_len1,y_len1,xy_len,conv)
+    conv_kernel(data,filt,x_len0,y_len0,x_len1,y_len1,xy_len,conv)
     
     return conv[:,1:-1,1:-1]

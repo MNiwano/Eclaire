@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+'''
+This module contains cupy.ElementwiseKernel or cupy.ReductionKernel instances 
+used internally in Eclair. 
+These are not intended to be used directly.
+'''
 
 from cupy import ElementwiseKernel, ReductionKernel
 
@@ -9,62 +14,84 @@ reduction_kernel = ElementwiseKernel(
     name='reduction'
 )
 
-liner_kernel = ElementwiseKernel(
-    in_params='T x1, T x2, T x3, T x4, T dx, T dy',
-    out_params='T z',
+neighbor_kernel = ElementwiseKernel(
+    in_params='raw T input, float32 dx, float32 dy, int32 width',
+    out_params='F output',
     operation='''
-    z = dx*dy*x1 + dx*(1-dy)*x2 + (1-dx)*dy*x3 + (1-dx)*(1-dy)*x4
+    int ix = i%width - roundf(dx) + 0.5;
+    int iy = i/width - roundf(dy) + 0.5;
+    output = input[ix + iy*width];
+    ''',
+    name='neighbor'
+)
+
+linear_kernel = ElementwiseKernel(
+    in_params='raw X x, float32 dx, float32 dy, int32 width',
+    out_params='F z',
+    operation='''
+    float ex = 1 - dx;
+    float ey = 1 - dy;
+    z = (
+        dx * dy * x[i] +
+        ex * dy * x[i+1] +
+        dx * ey * x[i+width] +
+        ex * ey * x[i+1+width]
+    )
     ''',
     name='linear'
 )
 
 spline_kernel = ElementwiseKernel(
-    in_params='T u1, T u2, T y1, T y2, T d',
-    out_params='T z',
+    in_params='raw U u, raw Y y, float32 d, int32 width',
+    out_params='F z',
     operation='''
-    z = (u1-u2)*pow(1-d,3) + 3*u2*pow(1-d,2) + (y1-y2-u1-2*u2)*(1-d) + y2
+    F u1 = u[i];
+    F u2 = u[i+width];
+    F y1 = y[i];
+    F y2 = y[i+width];
+    z = (u2-u1)*pow(d,3) + 3*u1*pow(d,2) + (y2-y1-u2-2*u1)*d + y1
     ''',
     name='spline'
 )
 
-sum_kernel = ReductionKernel(
+filterdsum_kernel = ReductionKernel(
     in_params='T x, T f',
     out_params='T y',
     map_expr='x*f',
     reduce_expr='a+b',
     post_map_expr='y=a',
     identity='0',
-    name='sum'
+    name='filterdsum'
 )
 
-sqm_kernel = ReductionKernel(
-    in_params='T x, T m, T f',
+filterdstd_kernel = ReductionKernel(
+    in_params='T x, M m, F f',
     out_params='T y',
     map_expr='pow(x-m,2)*f',
     reduce_expr='a+b',
     post_map_expr='y=a',
     identity='0',
-    name='sqared_sum'
+    name='filterdstd'
 )
 
 median_kernel = ElementwiseKernel(
-    in_params='T x, T f, T m',
+    in_params='T x, F f, M m',
     out_params='T z',
     operation='z = x*f + (1-f)*m',
     name='median'
 )
 
 clip_kernel = ElementwiseKernel(
-    in_params='T d, T f, T c, T s, T w',
+    in_params='D d, T f, C c, S s, float32 w',
     out_params='T z',
     operation='''
-    float t;
-    if (fabsf(d-c) <= w*s) {
-        t = 1.0;
+    T tmp;
+    if (abs(d-c) <= w*s) {
+        tmp = 1;
     } else {
-        t = 0.0;
+        tmp = 0;
     }
-    z = t*f;
+    z = tmp * f;
     ''',
     name='clip'
 )
@@ -73,25 +100,38 @@ judge_kernel = ElementwiseKernel(
     in_params='T x',
     out_params='T z',
     operation='''
-    if (x==0.0) {
-        z=1.0;
+    if (x==0) {
+        z=1;
     } else {
-        z=0.0;
+        z=0;
     }
     ''',
     name='judge'
 )
 
-fix_kernel = ElementwiseKernel(
-    in_params='T m, T d, T n, T f',
+replace_kernel = ElementwiseKernel(
+    in_params='T x, T r',
     out_params='T z',
-    operation='z = m*d / (n+f)',
+    operation='''
+    if (x==0) {
+        z=r;
+    } else {
+        z=x;
+    }
+    ''',
+    name='replace'
+)
+
+fix_kernel = ElementwiseKernel(
+    in_params='T x ,M m, D d, N n, F f',
+    out_params='T z',
+    operation='z = (1-m)*x + m*d/(n+f)',
     name='fix'
 )
 
 conv_kernel = ElementwiseKernel(
     in_params='''
-    T input, int16 lx0, int16 ly0, int16 lx1, int16 ly1, int32 lxy
+    T input, T filt, int32 lx0, int32 ly0, int32 lx1, int32 ly1, int32 lxy
     ''',
     out_params='raw T output',
     operation='''
@@ -99,10 +139,13 @@ conv_kernel = ElementwiseKernel(
     int i_x = ixy % lx0;
     int i_y = ixy / lx0;
     int i_z = i / lxy;
-    for(int x=i_x; x<=i_x+2; x++){
-        for(int y=i_y; y<=i_y+2; y++){
-            int idx = x+(y+i_z*ly1)*lx1;
-            output[idx] += input;
+    int s_y = i_x + (i_y + i_z*ly1)*lx1;
+    int e_y = s_y + 2*lx1;
+    T prod = input * filt;
+    for (int y=s_y; y<=e_y; y+=lx1) {
+        int e_x = y + 2;
+        for (int idx=y; idx<=e_x; idx++) {
+            output[idx] += prod;
         }
     }
     ''',
