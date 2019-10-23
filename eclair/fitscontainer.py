@@ -32,6 +32,8 @@ class FitsContainer:
         (i.e. If slice = (slice(ymin,ymax),slice(xmin,xmax)),
         load() method gets the range:[ymin:ymax,xmin:xmax] of FITS data)
         See also setslice() method.
+    dtype : str or dtype (NumPy or CuPy), default 'float32'
+        dtype of cupy.ndarray created
 
     Notes
     -----
@@ -39,7 +41,7 @@ class FitsContainer:
     So, be careful when you edit these attributes.
     '''
 
-    def __init__(self,list):
+    def __init__(self,list,dtype=dtype):
         '''
         Parameters
         ----------
@@ -48,8 +50,9 @@ class FitsContainer:
             load() method refer this list to load FITS contents.
         '''
         self.list  = list
-        self.slice = (slice(0,None),slice(0,None))
+        self.dtype = dtype
 
+        self.slice  = (slice(0,None),slice(0,None))
         self.header = None
         self.data   = None
 
@@ -111,7 +114,7 @@ class FitsContainer:
             y_len, x_len = data.shape
 
             self.header = {self.list[0]: head}
-            self.data   = cp.empty([n,y_len,x_len],dtype=dtype)
+            self.data   = cp.empty([n,y_len,x_len],dtype=self.dtype)
             self.data[0,:,:] = data
             progress(0,*args)
             for i,f in enumerate(self.list[1:],1):
@@ -130,7 +133,7 @@ class FitsContainer:
                 head['CRPIX2'] -= self.slice[0].start
             except KeyError:
                 pass
-            data = cp.array(img[0].data[self.slice].astype(dtype))
+            data = cp.asrray(img[0].data[self.slice],dtype=self.dtype)
         return head, data
 
     def write(self,outlist,overwrite=False):
@@ -141,7 +144,7 @@ class FitsContainer:
         ----------
         outlist : array-like
             list of output FITS names
-        overwrite : bool, default Flase
+        overwrite : bool, default False
             If True, overwrite the output file if it exists.
             Raises an IOError if False and the output file exists.
         '''

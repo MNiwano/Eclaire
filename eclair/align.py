@@ -33,6 +33,8 @@ class ImAlign:
          poly3    - 3rd order polynomial interpolation
          linear   - linear interpolation
          neighbor - nearest neighbor
+    dtype : str or dtype, default 'float32'
+        dtype of array used internally
     '''
     
     def __init__(self,x_len,y_len,interp='spline3',dtype=dtype):
@@ -43,24 +45,28 @@ class ImAlign:
             Shape of images to align
         interp : {'spline3', 'poly3', 'linear', 'neighbor'}, default 'spline3'
             Subpixel interpolation algorithm in subpixel image shift
-             spline3 - bicubic spline
-             poly3   - 3rd order interior polynomial
-             linear  - bilinear
+             spline3  - bicubic spline
+             poly3    - 3rd order interior polynomial
+             linear   - bilinear
              neighbor - nearest neighbor
+        dtype : str or dtype, default 'float32'
+            dtype of array used internally
+            If the input dtype is different, use a casted copy.
         '''
         self.x_len  = x_len
         self.y_len  = y_len
         self.interp = interp
+        self.dtype  = dtype
         if   interp == 'spline3':
             self.shift = self.__spline
-            self.matx = Ms(x_len)
+            self.matx = Ms(x_len,dtype)
             if y_len == x_len:
                 self.maty = self.matx.view()
             else:
-                self.maty = Ms(y_len)
+                self.maty = Ms(y_len,dtype)
         elif interp == 'poly3':
             self.shift = self.__poly
-            self.mat = Mp()
+            self.mat = Mp(dtype)
         elif interp == 'linear':
             self.shift = self.__linear
         elif interp == 'neighbor':
@@ -113,6 +119,8 @@ class ImAlign:
         align : 3-dimension cupy.ndarray
             An array of images aligned and stacked along the 1st axis
         '''
+        data = cp.asarray(data,dtype=self.dtype)
+
         nums, y_len, x_len = data.shape
         if (y_len,x_len) != (self.y_len,self.x_len):
             message = 'shape of images is differ from (%d,%d)'
@@ -123,9 +131,9 @@ class ImAlign:
         lowlim = np.floor(shifts.min(axis=0))
 
         shifts = shifts - lowlim
-        x_u,y_u = np.floor(shifts.max(axis=0)).astype('int')
+        x_u,y_u = np.floor(shifts.max(axis=0)).astype(int)
     
-        xy_i = np.floor(shifts).astype('int')
+        xy_i = np.floor(shifts).astype(int)
         xy_d = shifts - xy_i
 
         iterator = zip(xy_i,xy_d,data)
@@ -143,7 +151,7 @@ class ImAlign:
                 selected += list(np.where(flags)[0])
                 iterator = (i for i,f in zip(iterator,flags) if f)
                 
-        aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=dtype)
+        aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
             aligned[i] = self.shift(layer,dx,dy)[
                 y_u-iy : y_len-iy,
@@ -154,7 +162,7 @@ class ImAlign:
         return aligned
 
     def __neighbor(self,data,dx,dy):
-        shifted = cp.empty_like(data,dtype=dtype)
+        shifted = cp.empty_like(data)
         neighbor_kernel(data,dx,dy,self.x_len,shifted)
         return shifted
 
@@ -169,8 +177,8 @@ class ImAlign:
 
         shifted = self.__linear(data,dx,dy)
 
-        shift_vector = cp.empty([16],dtype=dtype)
-        stack = cp.empty([16,y_len,x_len],dtype=dtype)
+        shift_vector = cp.empty([16],dtype=self.dtype)
+        stack = cp.empty([16,y_len,x_len],dtype=self.dtype)
         for i, j in product(range(4),repeat=2):
             shift_vector[i*4+j] = (1-dx)**i * (1-dy)**j
             stack[i*4+j,:,:]  = data[i:i+y_len,j:j+x_len]
@@ -182,19 +190,19 @@ class ImAlign:
 
     def __spline(self,data,dx,dy):
         shifted = self.__neighbor(data,dx,dy)
-        tmpd = cp.empty([self.x_len-1,self.y_len],dtype=dtype)
+        tmpd = cp.empty([self.x_len-1,self.y_len],dtype=self.dtype)
         self.__spline1d(data.T,dx,self.matx,tmpd)
         self.__spline1d(tmpd.T,dy,self.maty,shifted[1:,1:])
         return shifted
 
     def __spline1d(self,data,d,mat,out):
         v = data[2:,:]+data[:-2,:]-2*data[1:-1,:]
-        u = cp.zeros_like(data,dtype=dtype)
+        u = cp.zeros_like(data)
         cp.dot(mat,v,out=u[1:-1,:])
         spline_kernel(u,data,1-d,out.shape[-1],out)
 
 def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
-            tolerance=None,selected=None):
+            tolerance=None,selected=None,dtype=dtype):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
@@ -207,12 +215,12 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
     eclair.ImAlign : Class to generate imalign function
     '''
     y_len, x_len = data.shape[1:]
-    func = ImAlign(x_len=x_len,y_len=y_len,interp=interp)
+    func = ImAlign(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
 
     return func(data,shifts,baseidx=baseidx,reject=reject,
                 tolerance=tolerance,selected=selected)
 
-def Mp():
+def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
         Mp[y*4+x,k*4+l] = (x-1)**k * (y-1)**l
@@ -220,7 +228,7 @@ def Mp():
 
     return Mp
 
-def Ms(ax_len):
+def Ms(ax_len,dtype):
     Ms = 4 * np.identity(ax_len-2,dtype=dtype)
     Ms[1:  , :-1] += np.identity(ax_len-3,dtype=dtype)
     Ms[ :-1,1:  ] += np.identity(ax_len-3,dtype=dtype)

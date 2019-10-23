@@ -16,7 +16,7 @@ reduction_kernel = ElementwiseKernel(
 
 neighbor_kernel = ElementwiseKernel(
     in_params='raw T input, float32 dx, float32 dy, int32 width',
-    out_params='F output',
+    out_params='T output',
     operation='''
     int ix = i%width - roundf(dx) + 0.5;
     int iy = i/width - roundf(dy) + 0.5;
@@ -26,8 +26,8 @@ neighbor_kernel = ElementwiseKernel(
 )
 
 linear_kernel = ElementwiseKernel(
-    in_params='raw X x, float32 dx, float32 dy, int32 width',
-    out_params='F z',
+    in_params='raw T x, float32 dx, float32 dy, int32 width',
+    out_params='T z',
     operation='''
     float ex = 1 - dx;
     float ey = 1 - dy;
@@ -42,13 +42,13 @@ linear_kernel = ElementwiseKernel(
 )
 
 spline_kernel = ElementwiseKernel(
-    in_params='raw U u, raw Y y, float32 d, int32 width',
-    out_params='F z',
+    in_params='raw T u, raw T y, float32 d, int32 width',
+    out_params='T z',
     operation='''
-    F u1 = u[i];
-    F u2 = u[i+width];
-    F y1 = y[i];
-    F y2 = y[i+width];
+    T u1 = u[i];
+    T u2 = u[i+width];
+    T y1 = y[i];
+    T y2 = y[i+width];
     z = (u2-u1)*pow(d,3) + 3*u1*pow(d,2) + (y2-y1-u2-2*u1)*d + y1
     ''',
     name='spline'
@@ -65,7 +65,7 @@ filterdsum_kernel = ReductionKernel(
 )
 
 filterdstd_kernel = ReductionKernel(
-    in_params='T x, M m, F f',
+    in_params='T x, T m, T f',
     out_params='T y',
     map_expr='pow(x-m,2)*f',
     reduce_expr='a+b',
@@ -75,22 +75,17 @@ filterdstd_kernel = ReductionKernel(
 )
 
 median_kernel = ElementwiseKernel(
-    in_params='T x, F f, M m',
+    in_params='T x, T f, T m',
     out_params='T z',
     operation='z = x*f + (1-f)*m',
     name='median'
 )
 
 clip_kernel = ElementwiseKernel(
-    in_params='D d, T f, C c, S s, float32 w',
+    in_params='T d, T f, T c, T s, float32 w',
     out_params='T z',
     operation='''
-    T tmp;
-    if (abs(d-c) <= w*s) {
-        tmp = 1;
-    } else {
-        tmp = 0;
-    }
+    T tmp = (abs(d-c) <= w*s);
     z = tmp * f;
     ''',
     name='clip'
@@ -100,11 +95,7 @@ judge_kernel = ElementwiseKernel(
     in_params='T x',
     out_params='T z',
     operation='''
-    if (x==0) {
-        z=1;
-    } else {
-        z=0;
-    }
+    z = (x==0)
     ''',
     name='judge'
 )
@@ -113,17 +104,14 @@ replace_kernel = ElementwiseKernel(
     in_params='T x, T r',
     out_params='T z',
     operation='''
-    if (x==0) {
-        z=r;
-    } else {
-        z=x;
-    }
+    T t = (x==0);
+    z = (1-t)*x + t*r;
     ''',
     name='replace'
 )
 
 fix_kernel = ElementwiseKernel(
-    in_params='T x ,M m, D d, N n, F f',
+    in_params='T x ,T m, T d, T n, T f',
     out_params='T z',
     operation='z = (1-m)*x + m*d/(n+f)',
     name='fix'

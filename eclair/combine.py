@@ -25,17 +25,21 @@ from kernel import (
 #############################
 
 class SigClip:
-    def __init__(self,combine='mean',center='mean',axis=0,returnfilter=False):
+    def __init__(self,combine='mean',center='mean',
+        axis=0,dtype=dtype,returnfilter=False):
         self.combine = combine
         self.center  = center
         self.axis    = axis
+        self.dtype   = dtype
         self.rtnfilt = returnfilter
 
     def __call__(self,data,iter=3,width=3.0,filter=None):
+        data = cp.asarray(data,dtype=self.dtype)
+
         if filter is None:
-            filt = cp.ones_like(data,dtype=dtype)
+            filt = cp.ones_like(data)
         else:
-            filt = filter
+            filt = cp.asarray(filter,dtype=self.dtype)
 
         for _ in range(iter):
             filt = self.genfilt(data,filt,width)
@@ -79,7 +83,7 @@ class SigClip:
         nums = filt.sum(axis=0)
         even = 1-(nums%2)
 
-        tmpf = cp.zeros_like(data,dtype=dtype)
+        tmpf = cp.zeros_like(data)
         tmpd = median_kernel(data,filt,data.max(axis=0))
         tmpd.sort(axis=0)
 
@@ -95,7 +99,7 @@ class SigClip:
         return self.mean(tmpd,tmpf)
 
 def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
-        iter=3,width=3.0,filter=None,memsave=False,overwrite=False):
+        iter=3,width=3.0,dtype=dtype,filter=None,memsave=False,overwrite=False):
     '''
     Calculate sigma-clipped mean or median of images,
     and write to FITS file
@@ -119,6 +123,9 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         A number of sigmaclipping iterations
     width : int or float, default 3.0
         A clipping width in sigma units
+    dtype : str or dtype, default 'float32'
+        dtype of array used internally
+        If the input dtype is different, use a casted copy.
     memsave : bool, default False
         If True, divide data and calculate it serially.
         Then, VRAM is saved, but speed may be slower.
@@ -130,7 +137,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
     for v, k in zip((combine,center),('combine','center')):
         if v not in ('mean','median'):
             raise ValueError('"%s" is not impremented as %s'%(v,k))
-    sigclip = SigClip(combine,center)
+    sigclip = SigClip(combine,center,dtype=dtype)
 
     nums, y_len, x_len = data.shape
     if memsave:
