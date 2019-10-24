@@ -155,6 +155,6 @@ class FitsContainer:
                 data=data.get(),
                 header=self.header[f].copy()
             )
-            hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
+            hdu.header.insert(5,('DATE',now_ut,'Date FITS file was generated'))
             hdu.header.append(origin)
             hdu.writeto(o,overwrite=overwrite)

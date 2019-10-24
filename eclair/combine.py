@@ -15,6 +15,7 @@ from param import dtype, origin
 from kernel import (
     filterdsum_kernel,
     filterdstd_kernel,
+    nonzerosum_kernel,
     median_kernel,
     clip_kernel,
     replace_kernel,
@@ -67,14 +68,12 @@ class SigClip:
         return filt
     
     def sigma(self,data,mean,filt):
-        num = filt.sum(axis=self.axis,keepdims=True)
-        replace_kernel(num,1,num)
+        num = nonzerosum_kernel(filt,axis=self.axis,keepdims=True)
         sqm = filterdstd_kernel(data,mean,filt,axis=self.axis,keepdims=True)
         return cp.sqrt(sqm/num)
 
     def mean(self,data,filt,keepdims=False):
-        num = filt.sum(axis=self.axis,keepdims=keepdims)
-        replace_kernel(num,1,num)
+        num = nonzerosum_kernel(filt,axis=self.axis,keepdims=keepdims)
         sum = filterdsum_kernel(data,filt,axis=self.axis,keepdims=keepdims)
         return sum/num
     
@@ -136,7 +135,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
 
     for v, k in zip((combine,center),('combine','center')):
         if v not in ('mean','median'):
-            raise ValueError('"%s" is not impremented as %s'%(v,k))
+            raise ValueError('"{0}" is not impremented as {1}'.format(v,k))
     sigclip = SigClip(combine,center,dtype=dtype)
 
     nums, y_len, x_len = data.shape
@@ -162,15 +161,21 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         header=copy(header),
     )
 
-    hdu.header.insert(6,('DATE',now_ut,'Date FITS file was generated'))
+    hdu.header.insert(5,('DATE',now_ut,'Date FITS file was generated'))
     if list:
         if len(list) != nums:
             warn('Number of items is different between list and data')
+        if len(list) <= 999:
+            key = 'IMCMB{:03d}'
+        else:
+            key = 'IMCMB{:03X}'
+            msg = "IMCMB key's number are written in hexadecimal."
+            hdu.header.append('COMMENT',msg)
         for i,f in enumerate(list,1):
-            hdu.header['IMCMB%03d'%i] = basename(f)
+            hdu.header[key.format(i)] = basename(f)
     hdu.header['NCOMBINE'] = nums
     hdu.header.append(origin)
 
     hdu.writeto(name,overwrite=overwrite)
 
-    print('Combine: %d frames, Output: %s'%(nums,name))
+    print('Combine: {0:d} frames, Output: {1}'.format(nums,name))

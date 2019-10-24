@@ -72,7 +72,7 @@ class ImAlign:
         elif interp == 'neighbor':
             self.shift = self.__neighbor
         else:
-            raise ValueError('"%s" is not inpremented'%interp)
+            raise ValueError('"{}" is not inpremented'.format(interp))
         
     def __call__(self,data,shifts,reject=False,baseidx=None,tolerance=None,
                  selected=None,progress=lambda *args:None,args=()):
@@ -123,8 +123,8 @@ class ImAlign:
 
         nums, y_len, x_len = data.shape
         if (y_len,x_len) != (self.y_len,self.x_len):
-            message = 'shape of images is differ from (%d,%d)'
-            raise ValueError(message%(self.y_len,self.x_len))
+            message = 'shape of images is differ from {}'
+            raise ValueError(message.format((self.y_len,self.x_len)))
         if nums != len(shifts):
             raise ValueError('data and shifts do not match')
 

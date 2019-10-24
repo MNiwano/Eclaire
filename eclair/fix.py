@@ -6,7 +6,6 @@ import cupy     as cp
 
 from param  import dtype
 from kernel import (
-    judge_kernel,
     fix_kernel,
     conv_kernel,
 )
@@ -46,22 +45,21 @@ def fixpix(data,mask,dtype=dtype,memsave=False):
     data = cp.asarray(data,dtype=dtype)
     mask = cp.asarray(mask,dtype=dtype)
 
-    tmpm = mask[cp.newaxis,:,:]
+    filt = 1 - mask[cp.newaxis,:,:]
     if memsave:
         fixed = data.view()
     else:
         fixed = data.copy()
-    while tmpm.sum():
-        filt  = 1 - tmpm
-        dconv = convolve(fixed,filt,dtype=dtype)
-        nconv = convolve(filt,1.0,dtype=dtype)
-        zeros = judge_kernel(nconv)
-        fix_kernel(fixed, tmpm, dconv, nconv, zeros, fixed)
-        tmpm  = zeros
+    cp.multiply(fixed,filt,out=fixed)
+    while not filt.all():
+        dconv = convolve(fixed,dtype=dtype)
+        nconv = convolve(filt,dtype=dtype)
+        fix_kernel(fixed, filt, dconv, nconv, fixed)
+        cp.sign(nconv,out=filt)
 
     return fixed
 
-def convolve(data,filt,dtype=dtype):
+def convolve(data,dtype=dtype):
     nums, y_len0, x_len0 = data.shape
     x_len1 = x_len0 + 2
     y_len1 = y_len0 + 2
@@ -69,6 +67,6 @@ def convolve(data,filt,dtype=dtype):
 
     conv = cp.zeros([nums,y_len1,x_len1],dtype=dtype)
     
-    conv_kernel(data,filt,x_len0,y_len0,x_len1,y_len1,xy_len,conv)
+    conv_kernel(data,x_len0,y_len0,x_len1,y_len1,xy_len,conv)
     
     return conv[:,1:-1,1:-1]

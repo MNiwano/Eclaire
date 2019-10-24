@@ -9,7 +9,7 @@ from cupy import ElementwiseKernel, ReductionKernel
 
 reduction_kernel = ElementwiseKernel(
     in_params='T x, T b, T d, T f',
-    out_params='T z',
+    out_params='F z',
     operation='z = (x - b - d) / f',
     name='reduction'
 )
@@ -74,6 +74,16 @@ filterdstd_kernel = ReductionKernel(
     name='filterdstd'
 )
 
+nonzerosum_kernel = ReductionKernel(
+    in_params='T x',
+    out_params='T y',
+    map_expr='x',
+    reduce_expr='a+b',
+    post_map_expr='y = a + (a==0)',
+    identity='0',
+    name='nonzerosum'
+)
+
 median_kernel = ElementwiseKernel(
     in_params='T x, T f, T m',
     out_params='T z',
@@ -91,15 +101,6 @@ clip_kernel = ElementwiseKernel(
     name='clip'
 )
 
-judge_kernel = ElementwiseKernel(
-    in_params='T x',
-    out_params='T z',
-    operation='''
-    z = (x==0)
-    ''',
-    name='judge'
-)
-
 replace_kernel = ElementwiseKernel(
     in_params='T x, T r',
     out_params='T z',
@@ -111,15 +112,18 @@ replace_kernel = ElementwiseKernel(
 )
 
 fix_kernel = ElementwiseKernel(
-    in_params='T x ,T m, T d, T n, T f',
+    in_params='T x ,T f, T d, T n',
     out_params='T z',
-    operation='z = (1-m)*x + m*d/(n+f)',
+    operation='''
+    T t = (n==0);
+    z = x + (1-f)*d/(n+t);
+    ''',
     name='fix'
 )
 
 conv_kernel = ElementwiseKernel(
     in_params='''
-    T input, T filt, int32 lx0, int32 ly0, int32 lx1, int32 ly1, int32 lxy
+    T input, int32 lx0, int32 ly0, int32 lx1, int32 ly1, int32 lxy
     ''',
     out_params='raw T output',
     operation='''
@@ -129,11 +133,10 @@ conv_kernel = ElementwiseKernel(
     int i_z = i / lxy;
     int s_y = i_x + (i_y + i_z*ly1)*lx1;
     int e_y = s_y + 2*lx1;
-    T prod = input * filt;
-    for (int y=s_y; y<=e_y; y+=lx1) {
+   for (int y=s_y; y<=e_y; y+=lx1) {
         int e_x = y + 2;
         for (int idx=y; idx<=e_x; idx++) {
-            output[idx] += prod;
+            output[idx] += input;
         }
     }
     ''',
