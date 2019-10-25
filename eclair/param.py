@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-__version__ = '0.8'
-__update__  = '18 October 2019'
+__version__ = '0.9'
+__update__  = '25 October 2019'
 
 dtype = 'float32'
 
