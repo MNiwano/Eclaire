@@ -94,19 +94,9 @@ class FitsContainer:
         '''
         self.slice = (slice(ymin,ymax),slice(xmin,xmax))
 
-    def load(self,progress=lambda *args:None,args=()):
+    def load(self):
         '''
         Load FITS header and data with refering list
-
-        Parameters
-        ----------
-        progress : callable object, default lambda *args:None
-            Function to be executed simultaneously with data reading
-            and given arguments (i, *args), where i is index of FITS
-            If you want to do something simultaneously with reading,
-            input as a function. (e.g. logging, showing progress bar, etc)
-        args : tupple, default ()
-            argments given additionally to the progress function
         '''
         n = len(self.list)
         if n:
@@ -116,12 +106,10 @@ class FitsContainer:
             self.header = {self.list[0]: head}
             self.data   = cp.empty([n,y_len,x_len],dtype=self.dtype)
             self.data[0,:,:] = data
-            progress(0,*args)
             for i,f in enumerate(self.list[1:],1):
                 head, data = self.__fitsopen(f)
                 self.header[f]   = head
                 self.data[i,:,:] = data
-                progress(i,*args)
         else:
             raise ValueError('self.list is empty')
 

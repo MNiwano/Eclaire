@@ -11,6 +11,7 @@ from param import dtype
 from kernel import (
     neighbor_kernel,
     linear_kernel,
+    poly_kernel,
     spline_kernel,
 )
 
@@ -18,41 +19,11 @@ from kernel import (
 #   imalign
 #############################
 
-class ImAlign:
-    '''
-    Generate imalign function
-    Instance of this class can be used as function to align images.
+null = lambda *args:None
 
-    Attributes
-    ----------
-    x_len, y_len : int
-        Shape of images to align
-    interp : {'spline3', 'poly3', 'linear', 'neighbor'}
-        Subpixel interpolation algorithm in subpixel image shift
-         spline3  - 3rd order spline interpolation
-         poly3    - 3rd order polynomial interpolation
-         linear   - linear interpolation
-         neighbor - nearest neighbor
-    dtype : str or dtype, default 'float32'
-        dtype of array used internally
-    '''
+class ImAlign:
     
     def __init__(self,x_len,y_len,interp='spline3',dtype=dtype):
-        '''
-        Parameters
-        ----------
-        x_len, y_len : int
-            Shape of images to align
-        interp : {'spline3', 'poly3', 'linear', 'neighbor'}, default 'spline3'
-            Subpixel interpolation algorithm in subpixel image shift
-             spline3  - bicubic spline
-             poly3    - 3rd order interior polynomial
-             linear   - bilinear
-             neighbor - nearest neighbor
-        dtype : str or dtype, default 'float32'
-            dtype of array used internally
-            If the input dtype is different, use a casted copy.
-        '''
         self.x_len  = x_len
         self.y_len  = y_len
         self.interp = interp
@@ -75,51 +46,10 @@ class ImAlign:
             raise ValueError('"{}" is not inpremented'.format(interp))
         
     def __call__(self,data,shifts,reject=False,baseidx=None,tolerance=None,
-                 selected=None,progress=lambda *args:None,args=()):
-        '''
-        self.__call__(*args,**kwargs) <==> self(*args,**kwargs)
+                 selected=None,progress=null,args=()):
 
-        Stack the images with aligning their relative positions,
-        and cut out the overstretched area
-
-        Parameters
-        ----------
-        data : 3-dimension cupy.ndarray
-            An array of images stacked along the 1st axis
-            If the shape of image is differ from attributes x_len, y_len,
-            ValueError is raised.
-        shifts : 2-dimension numpy.ndarray
-            An array of relative positions of images in units of pixel
-            Along the 1st axis, values of each images must be the same order
-            as the 1st axis of "data".
-            Along the 2nd axis, the 1st item is interpreted as 
-            the value of X, the 2nd item as the value of Y.
-        reject : bool, default False
-            If True, reject too distant image.
-            Then, you must input baseidx, tolerance and selected.
-        baseidx : int, default None
-            Index of base image
-            If you set reject True, set also this parameter.
-        tolerance : int or float, default None
-            Maximum distance from base image, in units of pixel
-            If you set reject True, set also this parameter.
-        selected : variable referencing list object, default None
-            List for storing indices of selected images
-            If you set reject True, set also this parameter.
-        progress : function, default lambda *args:None
-            Function to be executed simultaneously with aligning
-            and given arguments (i, *args), where i is index of image
-            If you want to do something simultaneously with aligning,
-            input as a function. (e.g. logging, showing progress bar, etc)
-        args : tupple
-            arguments given additionally to the progress function
-
-        Returns
-        -------
-        align : 3-dimension cupy.ndarray
-            An array of images aligned and stacked along the 1st axis
-        '''
-        data = cp.asarray(data,dtype=self.dtype)
+        data   = cp.asarray(data,dtype=self.dtype)
+        shifts = np.asarray(shifts,dtype=self.dtype) 
 
         nums, y_len, x_len = data.shape
         if (y_len,x_len) != (self.y_len,self.x_len):
@@ -153,10 +83,8 @@ class ImAlign:
                 
         aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
-            aligned[i] = self.shift(layer,dx,dy)[
-                y_u-iy : y_len-iy,
-                x_u-ix : x_len-ix
-            ]
+            shifted = self.shift(layer,dx,dy)
+            aligned[i] = shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix]
             progress(i,*args)
 
         return aligned
@@ -172,19 +100,20 @@ class ImAlign:
         return shifted
     
     def __poly(self,data,dx,dy):
-        x_len = self.x_len-3
-        y_len = self.y_len-3
+        x_len = self.x_len
 
         shifted = self.__linear(data,dx,dy)
 
-        shift_vector = cp.empty([16],dtype=self.dtype)
-        stack = cp.empty([16,y_len,x_len],dtype=self.dtype)
-        for i, j in product(range(4),repeat=2):
-            shift_vector[i*4+j] = (1-dx)**i * (1-dy)**j
-            stack[i*4+j,:,:]  = data[i:i+y_len,j:j+x_len]
+        ex = 1-dx
+        ey = 1-dy
+        shift_vector = cp.array(
+            [ex**i * ey**j for i,j in product(range(4),repeat=2)],
+            dtype=self.dtype
+        )
 
-        tmpmat = cp.dot(shift_vector,self.mat)
-        shifted[2:-1,2:-1] = cp.tensordot(tmpmat,stack,1)
+        shift_vector.dot(self.mat,out=shift_vector)
+
+        poly_kernel(data,tmpvec,x_len-3,x_len,shifted[2:-1,2:-1])
 
         return shifted
 
@@ -198,7 +127,7 @@ class ImAlign:
     def __spline1d(self,data,d,mat,out):
         v = data[2:,:]+data[:-2,:]-2*data[1:-1,:]
         u = cp.zeros_like(data)
-        cp.dot(mat,v,out=u[1:-1,:])
+        mat.dot(v,out=u[1:-1,:])
         spline_kernel(u,data,1-d,out.shape[-1],out)
 
 def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
@@ -206,13 +135,45 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
-    This function uses class eclair.ImAlign internally.
 
-    Refer to eclair.ImAlign for documentation of parameters and return.
+    Parameters
+    ----------
+    data : 3-dimension cupy.ndarray
+        An array of images stacked along the 1st axis
+        If the shape of image is differ from attributes x_len, y_len,
+        ValueError is raised.
+    shifts : 2-dimension numpy.ndarray
+        An array of relative positions of images in units of pixel
+        Along the 1st axis, values of each images must be the same order
+        as the 1st axis of "data".
+        Along the 2nd axis, the 1st item is interpreted as 
+        the value of X, the 2nd item as the value of Y.
+    interp : {'spline3', 'poly3', 'linear', 'neighbor'}, default 'spline3'
+        Subpixel interpolation algorithm in subpixel image shift
+            spline3  - bicubic spline
+            poly3    - 3rd order interior polynomial
+            linear   - bilinear
+            neighbor - nearest neighbor
+    reject : bool, default False
+        If True, reject too distant image.
+        Then, you must input baseidx, tolerance and selected.
+    baseidx : int, default None
+        Index of base image
+        If you set reject True, set also this parameter.
+    tolerance : int or float, default None
+        Maximum distance from base image, in units of pixel
+        If you set reject True, set also this parameter.
+    selected : variable referencing list object, default None
+        List for storing indices of selected images
+        If you set reject True, set also this parameter.
+    dtype : str or dtype, default 'float32'
+        dtype of array used internally
+        If the dtype of input array is different, use a casted copy.
 
-    See also
-    --------
-    eclair.ImAlign : Class to generate imalign function
+    Returns
+    -------
+    align : 3-dimension cupy.ndarray
+        An array of images aligned and stacked along the 1st axis
     '''
     y_len, x_len = data.shape[1:]
     func = ImAlign(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
@@ -224,14 +185,16 @@ def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
         Mp[y*4+x,k*4+l] = (x-1)**k * (y-1)**l
-    Mp = cp.array(np.linalg.inv(Mp))
+    Mp = np.linalg.inv(Mp)
+    Mp = cp.array(Mp)
 
     return Mp
 
 def Ms(ax_len,dtype):
-    Ms = 4 * np.identity(ax_len-2,dtype=dtype)
-    Ms[1:  , :-1] += np.identity(ax_len-3,dtype=dtype)
-    Ms[ :-1,1:  ] += np.identity(ax_len-3,dtype=dtype)
-    Ms = cp.array(np.linalg.inv(Ms))
+    Ms = 4 * np.identity(ax_len-2)
+    Ms[1:,:-1] += np.identity(ax_len-3)
+    Ms[:-1,1:] += np.identity(ax_len-3)
+    Ms = np.linalg.inv(Ms)
+    Ms = cp.array(Ms,dtype=dtype)
 
     return Ms

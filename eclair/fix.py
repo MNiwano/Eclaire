@@ -14,7 +14,7 @@ from kernel import (
 #   fixpix
 #############################
 
-def fixpix(data,mask,dtype=dtype,memsave=False):
+def fixpix(data,mask,dtype=dtype,overwrite_input=False):
     '''
     fill the bad pixel with mean of surrounding pixels
 
@@ -29,7 +29,7 @@ def fixpix(data,mask,dtype=dtype,memsave=False):
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the input dtype is different, use a casted copy.
-    memsave : bool, default False
+    overwrite_input : bool, default False
         If True, input data is overwrited, but VRAM is saved.
 
     Returns
@@ -46,7 +46,7 @@ def fixpix(data,mask,dtype=dtype,memsave=False):
     mask = cp.asarray(mask,dtype=dtype)
 
     filt = 1 - mask[cp.newaxis,:,:]
-    if memsave:
+    if overwrite_input:
         fixed = data.view()
     else:
         fixed = data.copy()
@@ -60,13 +60,11 @@ def fixpix(data,mask,dtype=dtype,memsave=False):
     return fixed
 
 def convolve(data,dtype=dtype):
-    nums, y_len0, x_len0 = data.shape
-    x_len1 = x_len0 + 2
-    y_len1 = y_len0 + 2
-    xy_len = x_len0 * y_len0
+    y_len, x_len = data.shape[1:]
+    xy_len = x_len * y_len
 
-    conv = cp.zeros([nums,y_len1,x_len1],dtype=dtype)
+    conv = cp.empty_like(data)
     
-    conv_kernel(data,x_len0,y_len0,x_len1,y_len1,xy_len,conv)
+    conv_kernel(data,x_len,y_len,xy_len,conv)
     
-    return conv[:,1:-1,1:-1]
+    return conv

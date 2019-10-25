@@ -15,8 +15,7 @@ This module requires
     3. NumPy, Astropy and CuPy
 '''
 
-__all__ = ['reduction', 'FitsContainer', 'ImAlign',
-    'imalign', 'imcombine', 'fixpix']
+__all__ = ['reduction', 'FitsContainer', 'imalign', 'imcombine', 'fixpix']
 
 import cupy as cp
 

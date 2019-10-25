@@ -41,6 +41,25 @@ linear_kernel = ElementwiseKernel(
     name='linear'
 )
 
+poly_kernel = ElementwiseKernel(
+    in_params='raw T input, raw T vec, int32 w0, int32 w1',
+    out_params='T output',
+    operation='''
+    int i_x = i % w0;
+    int i_y = i / w0;
+    output = 0;
+    for (int dy=0; dy<=3; dy++) {
+        int y = (i_y + dy) * w1;
+        int dy4 = dy * 4;
+        for (int dx=0; dx<=3; dx++) {
+            int x = i_x + dx;
+            output += vec[dx + dy4] * input[x + y];
+        }
+    }
+    ''',
+    name='polynomial'
+)
+
 spline_kernel = ElementwiseKernel(
     in_params='raw T u, raw T y, float32 d, int32 width',
     out_params='T z',
@@ -84,31 +103,44 @@ nonzerosum_kernel = ReductionKernel(
     name='nonzerosum'
 )
 
-median_kernel = ElementwiseKernel(
+replace_kernel = ElementwiseKernel(
     in_params='T x, T f, T m',
     out_params='T z',
     operation='z = x*f + (1-f)*m',
+    name='replace'
+)
+
+median_kernel = ElementwiseKernel(
+    in_params='raw T input, T nums, int32 nop',
+    out_params='T output',
+    operation='''
+    int n = nums;
+    T even = 1 - n%2;
+    int idx = i + (n/2 - even)*nop;
+    T s = input[idx] + even*input[idx + nop];
+    output = (n!=0)*s / (1+even);
+    ''',
     name='median'
 )
 
-clip_kernel = ElementwiseKernel(
+updatefilt_kernel = ElementwiseKernel(
     in_params='T d, T f, T c, T s, float32 w',
     out_params='T z',
     operation='''
     T tmp = (abs(d-c) <= w*s);
     z = tmp * f;
     ''',
-    name='clip'
+    name='updatefilt'
 )
 
-replace_kernel = ElementwiseKernel(
+zeroreplace_kernel = ElementwiseKernel(
     in_params='T x, T r',
     out_params='T z',
     operation='''
     T t = (x==0);
     z = (1-t)*x + t*r;
     ''',
-    name='replace'
+    name='zeroreplace'
 )
 
 fix_kernel = ElementwiseKernel(
@@ -123,20 +155,25 @@ fix_kernel = ElementwiseKernel(
 
 conv_kernel = ElementwiseKernel(
     in_params='''
-    T input, int32 lx0, int32 ly0, int32 lx1, int32 ly1, int32 lxy
+    raw T input, int32 lx, int32 ly, int32 lxy
     ''',
-    out_params='raw T output',
+    out_params='T output',
     operation='''
     int ixy = i % lxy;
-    int i_x = ixy % lx0;
-    int i_y = ixy / lx0;
-    int i_z = i / lxy;
-    int s_y = i_x + (i_y + i_z*ly1)*lx1;
-    int e_y = s_y + 2*lx1;
-   for (int y=s_y; y<=e_y; y+=lx1) {
-        int e_x = y + 2;
-        for (int idx=y; idx<=e_x; idx++) {
-            output[idx] += input;
+    int i_x = ixy % lx;
+    int i_y = ixy / lx;
+    int s_x = i_x-1, e_x = i_x+1;
+    int s_y = i_y-1, e_y = i_y+1;
+    int z = (i / lxy) * ly;
+    output = 0;
+    for (int y=s_y; y<=e_y; y++) {
+        int my = (y + ly) % ly;
+        int yz = (z + my) * lx;
+        int fy = (my==y);
+        for (int x=s_x; x<=e_x; x++) {
+            int mx = (x + lx) % lx;
+            int f = (mx==x) * fy;
+            output += f * input[mx + yz];
         }
     }
     ''',

@@ -13,12 +13,12 @@ import cupy     as cp
 from param import dtype, origin
 
 from kernel import (
+    nonzerosum_kernel,
     filterdsum_kernel,
     filterdstd_kernel,
-    nonzerosum_kernel,
-    median_kernel,
-    clip_kernel,
     replace_kernel,
+    median_kernel,
+    updatefilt_kernel,
 )
 
 #############################
@@ -63,7 +63,7 @@ class SigClip:
         else:
             cent = self.median(data,filt)
         
-        clip_kernel(data,filt,cent,sigma,width,filt)
+        updatefilt_kernel(data,filt,cent,sigma,width,filt)
         
         return filt
     
@@ -80,22 +80,13 @@ class SigClip:
     def median(self,data,filt):
         y_len, x_len = data.shape[1:]
         nums = filt.sum(axis=0)
-        even = 1-(nums%2)
 
-        tmpf = cp.zeros_like(data)
-        tmpd = median_kernel(data,filt,data.max(axis=0))
+        tmpd = replace_kernel(data,filt,data.max(axis=0))
         tmpd.sort(axis=0)
 
-        z1 = np.ceil((nums/2 - 1).get()).astype(int)
-        x1, y1 = np.meshgrid(np.arange(x_len),np.arange(y_len))
+        result = median_kernel(tmpd,nums,y_len*x_len,nums)
 
-        y2, x2 = np.where(even.get())
-        z2 = z1[y2, x2] + 1
-
-        tmpf[z1.ravel(),y1.ravel(),x1.ravel()] = 1
-        tmpf[z2,y2,x2] = 1
-
-        return self.mean(tmpd,tmpf)
+        return result
 
 def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         iter=3,width=3.0,dtype=dtype,filter=None,memsave=False,overwrite=False):
