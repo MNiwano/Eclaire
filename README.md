@@ -4,7 +4,7 @@ Eclair
 Eclair : CUDA-based Library for Astronomical Image Reduction
 
 ## Description
-This module provides some useful classes and functions
+This package provides some useful classes and functions
 for astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 
@@ -19,8 +19,8 @@ If you want to try it, read readme.pdf.
   * CuPy
 
 ## Components
-* **eclair.py**  
-    a source file of module
+* **eclair**  
+    a source file of package
 * **readme.pdf**  
     a manual of reduction.ipynb and fitsget.ipynb
 * **reduction.ipynb**  
