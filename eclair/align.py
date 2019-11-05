@@ -127,8 +127,8 @@ class ImAlign:
         mat.dot(v,out=u[1:-1,:])
         spline_kernel(u,data,1-d,out.shape[-1],out)
 
-def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
-            tolerance=None,selected=None,dtype=dtype):
+def imalign(data,shifts,interp='spline3',reject=False,baseidx=0,
+            tolerance=None,dtype=dtype):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
@@ -172,8 +172,7 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
     y_len, x_len = data.shape[1:]
     func = ImAlign(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
 
-    return func(data,shifts,baseidx=baseidx,reject=reject,
-                tolerance=tolerance,selected=selected)
+    return func(data,shifts,baseidx=baseidx,reject=reject,tolerance=tolerance)
 
 def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
