@@ -15,7 +15,7 @@ reduction_kernel = ElementwiseKernel(
 )
 
 neighbor_kernel = ElementwiseKernel(
-    in_params='raw T input, float32 dx, float32 dy, int32 width',
+    in_params='raw T input, T dx, T dy, int32 width',
     out_params='T output',
     operation='''
     int ix = i%width - roundf(dx) + 0.5;
@@ -26,11 +26,11 @@ neighbor_kernel = ElementwiseKernel(
 )
 
 linear_kernel = ElementwiseKernel(
-    in_params='raw T x, float32 dx, float32 dy, int32 width',
+    in_params='raw T x, T dx, T dy, int32 width',
     out_params='T z',
     operation='''
-    float ex = 1 - dx;
-    float ey = 1 - dy;
+    T ex = 1 - dx;
+    T ey = 1 - dy;
     z = (
         dx * dy * x[i] +
         ex * dy * x[i+1] +
@@ -61,7 +61,7 @@ poly_kernel = ElementwiseKernel(
 )
 
 spline_kernel = ElementwiseKernel(
-    in_params='raw T u, raw T y, float32 d, int32 width',
+    in_params='raw T u, raw T y, T d, int32 width',
     out_params='T z',
     operation='''
     T u1 = u[i];
@@ -83,14 +83,14 @@ filterdsum_kernel = ReductionKernel(
     name='filterdsum'
 )
 
-filterdstd_kernel = ReductionKernel(
+filterdvar_kernel = ReductionKernel(
     in_params='T x, T m, T f',
     out_params='T y',
     map_expr='pow(x-m,2)*f',
     reduce_expr='a+b',
     post_map_expr='y=a',
     identity='0',
-    name='filterdstd'
+    name='filterdvar'
 )
 
 nonzerosum_kernel = ReductionKernel(
@@ -114,17 +114,19 @@ median_kernel = ElementwiseKernel(
     in_params='raw T input, T nums, int32 nop',
     out_params='T output',
     operation='''
-    int n = nums;
-    T even = 1 - n%2;
-    int idx = i + (n/2 - even)*nop;
-    T s = input[idx] + even*input[idx + nop];
-    output = (n!=0)*s / (1+even);
+    int n = roundf(nums);
+    int c = (n-1)/2;
+    int f = (n>0);
+    int i_1 = i + f*c*nop;
+    int i_2 = i + (n-1-c)*nop;
+    T s = input[i_1] + input[i_2];
+    output = f * s/2;
     ''',
     name='median'
 )
 
 updatefilt_kernel = ElementwiseKernel(
-    in_params='T d, T f, T c, T s, float32 w',
+    in_params='T d, T f, T c, T s, T w',
     out_params='T z',
     operation='''
     T tmp = (abs(d-c) <= w*s);
@@ -138,7 +140,7 @@ zeroreplace_kernel = ElementwiseKernel(
     out_params='T z',
     operation='''
     T t = (x==0);
-    z = (1-t)*x + t*r;
+    z = x + t*r;
     ''',
     name='zeroreplace'
 )
@@ -154,26 +156,24 @@ fix_kernel = ElementwiseKernel(
 )
 
 conv_kernel = ElementwiseKernel(
-    in_params='''
-    raw T input, int32 lx, int32 ly, int32 lxy
-    ''',
+    in_params='raw T input, int32 lx, int32 ly',
     out_params='T output',
     operation='''
-    int ixy = i % lxy;
-    int i_x = ixy % lx;
-    int i_y = ixy / lx;
+    int iyz = i / lx;
+    int i_x = i % lx;
+    int i_y = iyz % ly;
+    int i_z = iyz / ly;
     int s_x = i_x-1, e_x = i_x+1;
     int s_y = i_y-1, e_y = i_y+1;
-    int z = (i / lxy) * ly;
     output = 0;
     for (int y=s_y; y<=e_y; y++) {
         int my = (y + ly) % ly;
-        int yz = (z + my) * lx;
         int fy = (my==y);
         for (int x=s_x; x<=e_x; x++) {
             int mx = (x + lx) % lx;
-            int f = (mx==x) * fy;
-            output += f * input[mx + yz];
+            int f = (mx==x) & fy;
+            int idx[] = {i_z, my, mx};
+            output += f * input[idx];
         }
     }
     ''',

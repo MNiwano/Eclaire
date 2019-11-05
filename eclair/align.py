@@ -1,12 +1,15 @@
-
 # -*- coding: utf-8 -*-
 
+import sys
 from itertools  import product
+
+if sys.version_info.major == 2:
+    from itertools import izip as zip
 
 import numpy as np
 import cupy  as cp
 
-from param import dtype
+from param import dtype, null
 
 from kernel import (
     neighbor_kernel,
@@ -19,14 +22,13 @@ from kernel import (
 #   imalign
 #############################
 
-null = lambda *args:None
-
 class ImAlign:
+
+    interp_choices = ['spline3','poly3','linear','neighbor']
     
     def __init__(self,x_len,y_len,interp='spline3',dtype=dtype):
         self.x_len  = x_len
         self.y_len  = y_len
-        self.interp = interp
         self.dtype  = dtype
         if   interp == 'spline3':
             self.shift = self.__spline
@@ -45,11 +47,11 @@ class ImAlign:
         else:
             raise ValueError('"{}" is not inpremented'.format(interp))
         
-    def __call__(self,data,shifts,reject=False,baseidx=None,tolerance=None,
-                 selected=None,progress=null,args=()):
+    def __call__(self,data,shifts,reject=False,baseidx=0,tolerance=None,
+                 progress=null,args=()):
 
         data   = cp.asarray(data,dtype=self.dtype)
-        shifts = np.asarray(shifts,dtype=self.dtype) 
+        shifts = np.asarray(cp.asnumpy(shifts),dtype=self.dtype)
 
         nums, y_len, x_len = data.shape
         if (y_len,x_len) != (self.y_len,self.x_len):
@@ -58,36 +60,32 @@ class ImAlign:
         if nums != len(shifts):
             raise ValueError('data and shifts do not match')
 
-        lowlim = np.floor(shifts.min(axis=0))
-
-        shifts = shifts - lowlim
-        x_u,y_u = np.floor(shifts.max(axis=0)).astype(int)
-    
         xy_i = np.floor(shifts).astype(int)
         xy_d = shifts - xy_i
 
+        xy_i   -= xy_i.min(axis=0)
+        x_u,y_u = xy_i.max(axis=0)
+
         iterator = zip(xy_i,xy_d,data)
         if reject:
-            if isinstance(baseidx,int):
-                raise ValueError('baseidx is invalid')
-            elif isinstance(tolerance,(int,float)):
-                raise ValueError('tolerance is invalid')
-            elif isinstance(selected,list):
-                raise ValueError('selected is invalid')
-            else:
-                norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
-                flags = (norm <= tolerance)
-                nums  = flags.sum()
-                selected += list(np.where(flags)[0])
-                iterator = (i for i,f in zip(iterator,flags) if f)
-                
+            norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
+            if tolerance is None:
+                tolerance = norm.max()
+            flags = (norm <= tolerance)
+            nums  = flags.sum()
+            selected = [i for i,f in enumerate(flags) if f]
+            iterator = (i for i,f in zip(iterator,flags) if f)
+
         aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
             shifted = self.shift(layer,dx,dy)
             aligned[i] = shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix]
             progress(i,*args)
 
-        return aligned
+        if reject:
+            return aligned, selected
+        else:
+            return aligned
 
     def __neighbor(self,data,dx,dy):
         shifted = cp.empty_like(data)
@@ -107,13 +105,12 @@ class ImAlign:
         ex = 1-dx
         ey = 1-dy
         shift_vector = cp.array(
-            [ex**i * ey**j for i,j in product(range(4),repeat=2)],
+            [pow(ex,i) * pow(ey,j) for i,j in product(range(4),repeat=2)],
             dtype=self.dtype
         )
-
         shift_vector.dot(self.mat,out=shift_vector)
 
-        poly_kernel(data,tmpvec,x_len-3,x_len,shifted[2:-1,2:-1])
+        poly_kernel(data,shift_vector,x_len-3,x_len,shifted[2:-1,2:-1])
 
         return shifted
 
@@ -138,11 +135,9 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
 
     Parameters
     ----------
-    data : 3-dimension cupy.ndarray
-        An array of images stacked along the 1st axis
-        If the shape of image is differ from attributes x_len, y_len,
-        ValueError is raised.
-    shifts : 2-dimension numpy.ndarray
+    data : 3D ndarray
+        An array of images stacked along the 1st dimesion (axis=0)
+    shifts : 2D ndarray
         An array of relative positions of images in units of pixel
         Along the 1st axis, values of each images must be the same order
         as the 1st axis of "data".
@@ -156,24 +151,23 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=None,
             neighbor - nearest neighbor
     reject : bool, default False
         If True, reject too distant image.
-        Then, you must input baseidx, tolerance and selected.
-    baseidx : int, default None
+    baseidx : int, default 0
         Index of base image
-        If you set reject True, set also this parameter.
+        Referred when reject is True.
     tolerance : int or float, default None
         Maximum distance from base image, in units of pixel
-        If you set reject True, set also this parameter.
-    selected : variable referencing list object, default None
-        List for storing indices of selected images
-        If you set reject True, set also this parameter.
+        Referred when reject is True. If None, do not rejection.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the dtype of input array is different, use a casted copy.
 
     Returns
     -------
-    align : 3-dimension cupy.ndarray
+    align : 3D cupy.ndarray
         An array of images aligned and stacked along the 1st axis
+    selected : list
+        A indices list of images that are not rejected
+        Return only if reject is True.
     '''
     y_len, x_len = data.shape[1:]
     func = ImAlign(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
@@ -185,16 +179,17 @@ def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
         Mp[y*4+x,k*4+l] = (x-1)**k * (y-1)**l
-    Mp = np.linalg.inv(Mp)
-    Mp = cp.array(Mp)
+    Mp = np.linalg.solve(Mp,np.identity(16,dtype=dtype))
+    Mp = cp.array(Mp,dtype=dtype)
 
     return Mp
 
 def Ms(ax_len,dtype):
-    Ms = 4 * np.identity(ax_len-2)
-    Ms[1:,:-1] += np.identity(ax_len-3)
-    Ms[:-1,1:] += np.identity(ax_len-3)
-    Ms = np.linalg.inv(Ms)
+    identity = lambda x:np.identity(x,dtype=dtype)
+    Ms = 4 * identity(ax_len-2)
+    Ms[1:,:-1] += identity(ax_len-3)
+    Ms[:-1,1:] += identity(ax_len-3)
+    Ms = np.linalg.solve(Ms,identity(ax_len-2))
     Ms = cp.array(Ms,dtype=dtype)
 
     return Ms

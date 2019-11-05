@@ -2,20 +2,19 @@
 
 from itertools  import product
 from os.path    import basename
-from warnings   import warn
-from copy       import copy
-import time
+import warnings
 
-from astropy.io import fits
+from astropy.io   import fits
+from astropy.time import Time
 import numpy    as np
 import cupy     as cp
 
-from param import dtype, origin
-
+from param  import dtype
+from io     import fitswriter
 from kernel import (
     nonzerosum_kernel,
     filterdsum_kernel,
-    filterdstd_kernel,
+    filterdvar_kernel,
     replace_kernel,
     median_kernel,
     updatefilt_kernel,
@@ -27,12 +26,27 @@ from kernel import (
 
 class SigClip:
     def __init__(self,combine='mean',center='mean',
-        axis=0,dtype=dtype,returnfilter=False):
-        self.combine = combine
-        self.center  = center
+            axis=0,dtype=dtype,returnfilter=False):
+
         self.axis    = axis
         self.dtype   = dtype
         self.rtnfilt = returnfilter
+
+        errormsg = '{0} is not impremented as {1}'
+
+        if   center == 'mean':
+            self.center = lambda mean,*args:mean
+        elif center == 'median':
+            self.center = lambda mean,*args:self.median(*args,keepdims=True)
+        else:
+            raise ValueError(errormsg.format(center,'center'))
+
+        if   combine == 'mean':
+            self.combine = self.mean
+        elif combine == 'median':
+            self.combine = self.median
+        else:
+            raise ValueError(errormsg.format(combine,'combine'))
 
     def __call__(self,data,iter=3,width=3.0,filter=None):
         data = cp.asarray(data,dtype=self.dtype)
@@ -48,20 +62,15 @@ class SigClip:
         if self.rtnfilt:
             return filt
 
-        if self.combine == 'mean':
-            result = self.mean(data,filt)
-        else:
-            result = self.median(data,filt)
+        result = self.combine(data,filt)
 
         return result
 
     def genfilt(self,data,filt,width):
         mean  = self.mean(data,filt,keepdims=True)
         sigma = self.sigma(data,mean,filt)
-        if self.center == 'mean':
-            cent = mean.view()
-        else:
-            cent = self.median(data,filt)
+
+        cent = self.center(mean,data,filt)
         
         updatefilt_kernel(data,filt,cent,sigma,width,filt)
         
@@ -69,23 +78,24 @@ class SigClip:
     
     def sigma(self,data,mean,filt):
         num = nonzerosum_kernel(filt,axis=self.axis,keepdims=True)
-        sqm = filterdstd_kernel(data,mean,filt,axis=self.axis,keepdims=True)
-        return cp.sqrt(sqm/num)
+        sqm = filterdvar_kernel(data,mean,filt,axis=self.axis,keepdims=True)
+        cp.divide(sqm,num,out=sqm)
+        return cp.sqrt(sqm,out=sqm)
 
     def mean(self,data,filt,keepdims=False):
         num = nonzerosum_kernel(filt,axis=self.axis,keepdims=keepdims)
         sum = filterdsum_kernel(data,filt,axis=self.axis,keepdims=keepdims)
-        return sum/num
+        return cp.divide(sum,num,out=sum)
     
-    def median(self,data,filt):
+    def median(self,data,filt,keepdims=False):
         y_len, x_len = data.shape[1:]
-        nums = filt.sum(axis=0)
+        nums = filt.sum(axis=0,keepdims=keepdims)
 
         tmpd = replace_kernel(data,filt,data.max(axis=0))
         tmpd.sort(axis=0)
 
         result = median_kernel(tmpd,nums,y_len*x_len,nums)
-
+        
         return result
 
 def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
@@ -97,14 +107,17 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
     Parameters
     ----------
     name : str
-        A name of output FITS file
-    data : 3-dimension cupy.ndarray
-        An array of images stacked along the 1st axis
+        A path of output FITS file
+        Whether path like object is supported depends on
+        the version of Python and Astropy.
+    data : 3D ndarray
+        An array of images stacked along the 1st dimension (axis=0)
     list : array-like, default None
-        Names of images combined
+        Names of image to combine
         These are written to the header.
+        If the string is pathlike, only basename is used.
     header : astropy.io.fits.Header, default None
-        A header for output FITS file
+        Items of this header are appended to the header of the output file.
     combine : {'mean', 'median'}, default 'mean'
         An algorithm to combine images
     center : {'mean', 'median'}, default 'mean'
@@ -116,18 +129,20 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the input dtype is different, use a casted copy.
+    filter : ndarray, default None
+        array indicating which elements of data are used for calculation.
+        The value must be 1 for elements to use and 0 for elements to ignore.
     memsave : bool, default False
-        If True, divide data and calculate it serially.
+        If True, split data and process it serially.
         Then, VRAM is saved, but speed may be slower.
     overwrite : bool, default False
         If True, overwrite the output file if it exists.
         Raises an IOError if False and the output file exists.
     '''
-
-    for v, k in zip((combine,center),('combine','center')):
-        if v not in ('mean','median'):
-            raise ValueError('"{0}" is not impremented as {1}'.format(v,k))
     sigclip = SigClip(combine,center,dtype=dtype)
+    
+    if header is None:
+        header = fits.Header()
 
     nums, y_len, x_len = data.shape
     if memsave:
@@ -145,28 +160,21 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
     else:
         combined = sigclip(data,iter,width,filter=filter)
 
-    now_ut = time.strftime('%Y/%m/%dT%H:%M:%S',time.gmtime())
-
-    hdu = fits.PrimaryHDU(
-        data=combined.get(),
-        header=copy(header),
-    )
-
-    hdu.header.insert(5,('DATE',now_ut,'Date FITS file was generated'))
     if list:
         if len(list) != nums:
-            warn('Number of items is different between list and data')
+            warnings.warn(
+                'Number of items is different between list and data'
+            )
         if len(list) <= 999:
             key = 'IMCMB{:03d}'
         else:
             key = 'IMCMB{:03X}'
-            msg = "IMCMB key's number are written in hexadecimal."
-            hdu.header.append('COMMENT',msg)
+            msg = "IMCMB keys are written in hexadecimal."
+            header.append('COMMENT',msg)
         for i,f in enumerate(list,1):
-            hdu.header[key.format(i)] = basename(f)
-    hdu.header['NCOMBINE'] = nums
-    hdu.header.append(origin)
+            header[key.format(i)] = basename(f)
+    header['NCOMBINE'] = nums
 
-    hdu.writeto(name,overwrite=overwrite)
+    fitswriter(name,combined,header=header,overwrite=overwrite)
 
     print('Combine: {0:d} frames, Output: {1}'.format(nums,name))

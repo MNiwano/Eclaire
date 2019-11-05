@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from itertools  import product
-
 import cupy     as cp
 
 from param  import dtype
@@ -20,12 +18,15 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
 
     Parameters
     ----------
-    data : 3-dimension cupy.ndarray
-        An array of images stacked along the 1st axis
-    mask : 2-dimension cupy.ndarray
+    data : ndarray
+        An array of image
+        If a 3D array containing multiple images,
+        the images must be stacked along the 1st dimension (axis=0).
+    mask : ndarray
         An array indicates bad pixel positions
-        The shape of mask must be same as image.
+        The shape must be same as image.
         The value of bad pixel is 1, and the others is 0.
+        If all pixels are bad, raise ValueError.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the input dtype is different, use a casted copy.
@@ -34,37 +35,32 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
 
     Returns
     -------
-    fixed : 3-dimension cupy.ndarray
+    fixed : ndarray
         An array of images fixed bad pixel
     '''
-    y_len1, x_len1 = data.shape[1:]
-    y_len2, x_len2 = mask.shape
-    if not(y_len1==y_len2 and x_len1==x_len2):
+    if data.shape[-2:] != mask.shape[-2:]:
         raise ValueError('shape differs between data and mask')
+    elif mask.all():
+        raise ValueError('No available pixel')
 
-    data = cp.asarray(data,dtype=dtype)
-    mask = cp.asarray(mask,dtype=dtype)
+    data = cp.array(data,dtype=dtype,copy=False,ndmin=3)
+    mask = cp.array(mask,dtype=dtype,copy=False,ndmin=3)
 
-    filt = 1 - mask[cp.newaxis,:,:]
+    y_len, x_len = data.shape[-2:]
+    convolution = lambda data,out:conv_kernel(data,x_len,y_len,out)
+
+    filt = 1 - mask
     if overwrite_input:
         fixed = data.view()
     else:
         fixed = data.copy()
     cp.multiply(fixed,filt,out=fixed)
+    dconv = cp.empty_like(data)
+    nconv = cp.empty_like(filt)
     while not filt.all():
-        dconv = convolve(fixed,dtype=dtype)
-        nconv = convolve(filt,dtype=dtype)
-        fix_kernel(fixed, filt, dconv, nconv, fixed)
+        convolution(fixed,dconv)
+        convolution(filt,nconv)
+        fix_kernel(fixed,filt,dconv,nconv,fixed)
         cp.sign(nconv,out=filt)
-
-    return fixed
-
-def convolve(data,dtype=dtype):
-    y_len, x_len = data.shape[1:]
-    xy_len = x_len * y_len
-
-    conv = cp.empty_like(data)
-    
-    conv_kernel(data,x_len,y_len,xy_len,conv)
-    
-    return conv
+    del dconv, nconv, filt
+    return cp.squeeze(fixed)

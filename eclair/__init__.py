@@ -23,7 +23,7 @@ from param import __version__, dtype
 
 from kernel import reduction_kernel
 
-from fitscontainer import FitsContainer
+from io import FitsContainer
 
 from align import ImAlign, imalign
 
@@ -34,20 +34,20 @@ from fix import fixpix
 def reduction(image,bias,dark,flat,out=None,dtype=dtype):
     '''
     This function is equal to the equation:
-    result = (image - bias - dark) / flat, but needs less memory.
+    out = (image - bias - dark) / flat, but needs less memory.
     Therefore, each inputs must be broadcastable shape.
 
     Parameters
     ----------
-    image : cupy.ndarray
-    bias : cupy.ndarray
-    dark : cupy.ndarray
-    flat : cupy.ndarray
+    image : ndarray
+    bias : ndarray
+    dark : ndarray
+    flat : ndarray
     out : cupy.ndarray, default None
-        Alternate output array in which to place the result.  The default
+        Alternate output array in which to place the result. The default
         is ``None``; if provided, it must have the same shape as the
         expected output, but the type will be cast if necessary.
-    dtype : str or dtype (NumPy or CuPy), default 'float32'
+    dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the input dtype is different, use a casted copy.
     

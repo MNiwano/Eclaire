@@ -10,3 +10,5 @@ origin = (
     'Eclair v%s %s'%(__version__, __update__),
     'FITS file originator',
 )
+
+null = lambda *args:None
