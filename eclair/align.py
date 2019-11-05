@@ -65,6 +65,7 @@ class ImAlign:
         xy_i   -= xy_i.min(axis=0)
         x_u,y_u = xy_i.max(axis=0)
 
+        aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
         for i,((ix,iy),(dx,dy),layer) in enumerate(zip(xy_i,xy_d,data)):
             shifted = self.shift(layer,dx,dy)
             aligned[i] = shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix]
@@ -116,7 +117,6 @@ def imalign(data,shifts,interp='spline3',dtype=dtype):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
-
     Parameters
     ----------
     data : 3D ndarray
@@ -136,7 +136,6 @@ def imalign(data,shifts,interp='spline3',dtype=dtype):
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the dtype of input array is different, use a casted copy.
-
     Returns
     -------
     align : 3D cupy.ndarray
