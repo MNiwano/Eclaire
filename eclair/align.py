@@ -47,8 +47,7 @@ class ImAlign:
         else:
             raise ValueError('"{}" is not inpremented'.format(interp))
         
-    def __call__(self,data,shifts,reject=False,baseidx=0,tolerance=None,
-                 progress=null,args=()):
+    def __call__(self,data,shifts,progress=null,args=()):
 
         data   = cp.asarray(data,dtype=self.dtype)
         shifts = np.asarray(cp.asnumpy(shifts),dtype=self.dtype)
@@ -66,26 +65,12 @@ class ImAlign:
         xy_i   -= xy_i.min(axis=0)
         x_u,y_u = xy_i.max(axis=0)
 
-        iterator = zip(xy_i,xy_d,data)
-        if reject:
-            norm  = np.linalg.norm(shifts-shifts[baseidx,:],axis=1)
-            if tolerance is None:
-                tolerance = norm.max()
-            flags = (norm <= tolerance)
-            nums  = flags.sum()
-            selected = [i for i,f in enumerate(flags) if f]
-            iterator = (i for i,f in zip(iterator,flags) if f)
-
-        aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
-        for i,((ix,iy),(dx,dy),layer) in enumerate(iterator):
+        for i,((ix,iy),(dx,dy),layer) in enumerate(zip(xy_i,xy_d,data)):
             shifted = self.shift(layer,dx,dy)
             aligned[i] = shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix]
             progress(i,*args)
 
-        if reject:
-            return aligned, selected
-        else:
-            return aligned
+        return aligned
 
     def __neighbor(self,data,dx,dy):
         shifted = cp.empty_like(data)
@@ -127,8 +112,7 @@ class ImAlign:
         mat.dot(v,out=u[1:-1,:])
         spline_kernel(u,data,1-d,out.shape[-1],out)
 
-def imalign(data,shifts,interp='spline3',reject=False,baseidx=0,
-            tolerance=None,dtype=dtype):
+def imalign(data,shifts,interp='spline3',dtype=dtype):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
@@ -149,14 +133,6 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=0,
             poly3    - 3rd order interior polynomial
             linear   - bilinear
             neighbor - nearest neighbor
-    reject : bool, default False
-        If True, reject too distant image.
-    baseidx : int, default 0
-        Index of base image
-        Referred when reject is True.
-    tolerance : int or float, default None
-        Maximum distance from base image, in units of pixel
-        Referred when reject is True. If None, do not rejection.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the dtype of input array is different, use a casted copy.
@@ -172,7 +148,7 @@ def imalign(data,shifts,interp='spline3',reject=False,baseidx=0,
     y_len, x_len = data.shape[1:]
     func = ImAlign(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
 
-    return func(data,shifts,baseidx=baseidx,reject=reject,tolerance=tolerance)
+    return func(data,shifts)
 
 def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
