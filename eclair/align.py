@@ -22,7 +22,7 @@ from kernel import (
 #   imalign
 #############################
 
-class ImAlign:
+class Align:
 
     interp_choices = ['spline3','poly3','linear','neighbor']
     
@@ -91,7 +91,7 @@ class ImAlign:
         ex = 1-dx
         ey = 1-dy
         shift_vector = cp.array(
-            [pow(ex,i) * pow(ey,j) for i,j in product(range(4),repeat=2)],
+            [pow(ex,j) * pow(ey,i) for i,j in product(range(4),repeat=2)],
             dtype=self.dtype
         )
         shift_vector.dot(self.mat,out=shift_vector)
@@ -103,15 +103,9 @@ class ImAlign:
     def __spline(self,data,dx,dy):
         shifted = self.__neighbor(data,dx,dy)
         tmpd = cp.empty([self.x_len-1,self.y_len],dtype=self.dtype)
-        self.__spline1d(data.T,dx,self.matx,tmpd)
-        self.__spline1d(tmpd.T,dy,self.maty,shifted[1:,1:])
+        spline1d(data.T,dx,self.matx,tmpd)
+        spline1d(tmpd.T,dy,self.maty,shifted[1:,1:])
         return shifted
-
-    def __spline1d(self,data,d,mat,out):
-        v = data[2:,:]+data[:-2,:]-2*data[1:-1,:]
-        u = cp.zeros_like(data)
-        mat.dot(v,out=u[1:-1,:])
-        spline_kernel(u,data,1-d,out.shape[-1],out)
 
 def imalign(data,shifts,interp='spline3',dtype=dtype):
     '''
@@ -136,23 +130,21 @@ def imalign(data,shifts,interp='spline3',dtype=dtype):
     dtype : str or dtype, default 'float32'
         dtype of array used internally
         If the dtype of input array is different, use a casted copy.
+    
     Returns
     -------
     align : 3D cupy.ndarray
         An array of images aligned and stacked along the 1st axis
-    selected : list
-        A indices list of images that are not rejected
-        Return only if reject is True.
     '''
-    y_len, x_len = data.shape[1:]
-    func = ImAlign(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
+    y_len, x_len = data.shape[-2:]
+    func = Align(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
 
     return func(data,shifts)
 
 def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
-        Mp[y*4+x,k*4+l] = (x-1)**k * (y-1)**l
+        Mp[y*4+x,k*4+l] = (x-1)**l * (y-1)**k
     Mp = np.linalg.solve(Mp,np.identity(16,dtype=dtype))
     Mp = cp.array(Mp,dtype=dtype)
 
@@ -167,3 +159,9 @@ def Ms(ax_len,dtype):
     Ms = cp.array(Ms,dtype=dtype)
 
     return Ms
+
+def spline1d(data,d,mat,out):
+    v = data[2:]+data[:-2]-2*data[1:-1]
+    u = cp.zeros_like(data)
+    mat.dot(v,out=u[1:-1])
+    spline_kernel(u,data,1-d,out.shape[-1],out)

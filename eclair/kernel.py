@@ -64,10 +64,9 @@ spline_kernel = ElementwiseKernel(
     in_params='raw T u, raw T y, T d, int32 width',
     out_params='T z',
     operation='''
-    T u1 = u[i];
-    T u2 = u[i+width];
-    T y1 = y[i];
-    T y2 = y[i+width];
+    int i2 = i + width;
+    T u1 = u[i], u2 = u[i2];
+    T y1 = y[i], y2 = y[i2];
     z = (u2-u1)*pow(d,3) + 3*u1*pow(d,2) + (y2-y1-u2-2*u1)*d + y1
     ''',
     name='spline'
@@ -114,7 +113,7 @@ median_kernel = ElementwiseKernel(
     in_params='raw T input, T nums, int32 nop',
     out_params='T output',
     operation='''
-    int n = roundf(nums);
+    int n = nums;
     int c = (n-1)/2;
     int f = (n>0);
     int i_1 = i + f*c*nop;

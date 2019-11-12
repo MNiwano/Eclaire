@@ -5,7 +5,7 @@ Eclair
 
 Eclair: CUDA-based Library for Astronomical Image Reduction
 
-This module provides some useful classes and functions
+This package provides some useful classes and functions
 in astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 
@@ -15,7 +15,10 @@ This module requires
     3. NumPy, Astropy and CuPy
 '''
 
-__all__ = ['reduction', 'FitsContainer', 'imalign', 'imcombine', 'fixpix']
+__all__ = [
+    '__version__', 'reduction', 'FitsContainer',
+    'imalign', 'combine', 'imcombine', 'fixpix'
+]
 
 import cupy as cp
 
@@ -25,9 +28,9 @@ from kernel import reduction_kernel
 
 from io import FitsContainer
 
-from align import ImAlign, imalign
+from align import imalign
 
-from combine import imcombine
+from stats import combine, imcombine
 
 from fix import fixpix
 
@@ -61,8 +64,10 @@ def reduction(image,bias,dark,flat,out=None,dtype=dtype):
     flat  = cp.asarray(flat,dtype=dtype)
 
     if out is None:
-        shape = cp.broadcast(image,bias,dark,flat).shape
-        out = cp.empty(shape,dtype=dtype)
+        out = cp.empty(
+            cp.broadcast(image,bias,dark,flat).shape,
+            dtype=dtype
+        )
     
     reduction_kernel(image,bias,dark,flat,out)
 
