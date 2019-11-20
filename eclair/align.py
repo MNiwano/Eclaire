@@ -66,8 +66,8 @@ class Align:
         x_u,y_u = xy_i.max(axis=0)
 
         aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
-        for i,((ix,iy),(dx,dy),layer) in enumerate(zip(xy_i,xy_d,data)):
-            shifted = self.shift(layer,dx,dy)
+        for i,((ix,iy),dxy,frame) in enumerate(zip(xy_i,xy_d,data)):
+            shifted = self.shift(frame,*dxy)
             aligned[i] = shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix]
             progress(i,*args)
 
@@ -75,29 +75,27 @@ class Align:
 
     def __neighbor(self,data,dx,dy):
         shifted = cp.empty_like(data)
-        neighbor_kernel(data,dx,dy,self.x_len,shifted)
+        neighbor_kernel(data,dx,dy,shifted)
         return shifted
 
     def __linear(self,data,dx,dy):
         shifted = self.__neighbor(data,dx,dy)
-        linear_kernel(data,dx,dy,self.x_len,shifted[1:,1:])
+        linear_kernel(data,dx,dy,shifted[1:,1:])
         return shifted
     
     def __poly(self,data,dx,dy):
-        x_len = self.x_len
-
         shifted = self.__linear(data,dx,dy)
 
         ex = 1-dx
         ey = 1-dy
         shift_vector = cp.array(
-            [pow(ex,j) * pow(ey,i) for i,j in product(range(4),repeat=2)],
+            [ex**j * ey**i for i,j in product(range(4),repeat=2)],
             dtype=self.dtype
         )
         shift_vector.dot(self.mat,out=shift_vector)
         shift_mat = shift_vector.reshape(4,4)
 
-        poly_kernel(data,shift_mat,x_len-3,x_len,shifted[2:-1,2:-1])
+        poly_kernel(data,shift_mat,shifted[2:-1,2:-1])
 
         return shifted
 
@@ -163,4 +161,4 @@ def spline1d(data,d,mat,out):
     v = data[2:]+data[:-2]-2*data[1:-1]
     u = cp.zeros_like(data)
     cp.dot(mat,v,out=u[1:-1])
-    spline_kernel(u,data,1-d,out.shape[-1],out)
+    spline_kernel(u,data,1-d,out)

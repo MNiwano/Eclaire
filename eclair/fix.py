@@ -4,6 +4,7 @@ import cupy     as cp
 
 from param  import dtype
 from kernel import (
+    mask2filter,
     fix_kernel,
     conv_kernel,
 )
@@ -25,7 +26,7 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
     mask : ndarray
         An array indicates bad pixel positions
         The shape must be same as image.
-        The value of bad pixel is Nonzero, and the others is 0.
+        The value of bad pixel is nonzero, and the others is 0.
         If all pixels are bad, raise ValueError.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
@@ -50,15 +51,14 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
     data = cp.array(data,dtype=dtype,copy=False,ndmin=3)
     mask = cp.array(mask,dtype=dtype,copy=False,ndmin=3)
 
-    y_len, x_len = data.shape[-2:]
-    convolution = lambda data,out:conv_kernel(data,x_len,y_len,out)
+    convolution = lambda data,out:conv_kernel(data,out)
 
     if overwrite_input:
         fixed = data
     else:
         fixed = data.copy()
 
-    filt = 1 - mask
+    filt = mask2filter(mask)
     fixed *= filt
 
     dconv = cp.empty_like(data)

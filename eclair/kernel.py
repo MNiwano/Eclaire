@@ -15,9 +15,10 @@ reduction_kernel = ElementwiseKernel(
 )
 
 neighbor_kernel = ElementwiseKernel(
-    in_params='raw T input, T dx, T dy, int32 width',
+    in_params='raw T input, T dx, T dy',
     out_params='T output',
     operation='''
+        int width = input.shape()[1];
         T h = 0.5;
         int idx[] = {
             h + i/width - (dy>=h),
@@ -29,31 +30,29 @@ neighbor_kernel = ElementwiseKernel(
 )
 
 linear_kernel = ElementwiseKernel(
-    in_params='raw T x, T dx, T dy, int32 width',
+    in_params='raw T x, T dx, T dy',
     out_params='T z',
     operation='''
-        T ex = 1 - dx, ey = 1 - dy;
-        int i2 = i + width;
+        T ex = 1-dx, ey = 1-dy;
+        int i2 = i + x.shape()[1];
         z = dy*(dx*x[i] + ex*x[i+1]) + ey*(dx*x[i2] + ex*x[i2+1]);
     ''',
     name='linear'
 )
 
 poly_kernel = ElementwiseKernel(
-    in_params='raw T input, raw T mat, int32 w0, int32 w1',
+    in_params='raw T input, raw T mat',
     out_params='T output',
     operation='''
-        int i_x = i % w0, i_y = i / w0;
+        int width = input.shape()[1] - 3;
+        int i_x = i % width, i_y = i / width;
         int idx1[2], idx2[2];
-        T tmp;
+        int *y1 = &(idx1[1]), *x1 = &(idx1[2]);
+        int *y2 = &(idx2[1]), *x2 = &(idx2[2]);
         output = 0;
-        for (dy=0; dy<=3; dy++) {
-            idx1[0] = dy;
-            idx2[1] = dy + i_y;
-            tmp = 0;
-            for (int dx=0; dx<=3; dx++) {
-                idx1[1] = dx;
-                idx2[1] = dx + i_x;
+        for (*y1=0,*y2=i_y; *y1<=3; (*y1)++,(*y2)++) {
+            T tmp = 0;
+            for (*x1=0,*x2=i_x; *x1<=3; (*x1)++,(*x2)++) {
                 tmp += mat[idx1] * input[idx2];
             }
             output += tmp;
@@ -63,10 +62,10 @@ poly_kernel = ElementwiseKernel(
 )
 
 spline_kernel = ElementwiseKernel(
-    in_params='raw T u, raw T y, T d, int32 width',
+    in_params='raw T u, raw T y, T d',
     out_params='T z',
     operation='''
-        int i2 = i + width;
+        int i2 = i + u.shape()[1];
         T u1 = u[i], u2 = u[i2];
         T y1 = y[i], y2 = y[i2];
         T a3 = u2 - u1;
@@ -113,8 +112,8 @@ filterdvar = ReductionKernel(
     post_map_expr='y=a',
     identity='0',
     preamble='''
-        template <typename T> __device__
-        T square(T x, T m, T f) {
+        template <typename T>
+        __device__ T square(T x, T m, T f) {
             T dev = x-m;
             T var = dev*dev;
             return ((int)f ? var : f);
@@ -144,10 +143,17 @@ updatefilt_kernel = ElementwiseKernel(
     in_params='T d, T f, T c, T s, T w',
     out_params='T z',
     operation='''
-        T dev = d-c, lim = w * s;
+        T dev = d-c, lim = w*s;
         z = f * (dev*dev < lim*lim);
     ''',
     name='updatefilt'
+)
+
+mask2filter = ElementwiseKernel(
+    in_params='T m',
+    out_params='T f',
+    operation='f = (m==0)',
+    name='mask2filter'
 )
 
 fix_kernel = ElementwiseKernel(
@@ -161,9 +167,11 @@ fix_kernel = ElementwiseKernel(
 )
 
 conv_kernel = ElementwiseKernel(
-    in_params='raw T input, int32 lx, int32 ly',
+    in_params='raw T input',
     out_params='T output',
     operation='''
+        int ly = input.shape()[1];
+        int lx = input.shape()[2];
         int iyz = i / lx;
         int i_x = i % lx;
         int i_y = iyz % ly;
@@ -174,9 +182,9 @@ conv_kernel = ElementwiseKernel(
         int s_y = max(i_y-1,0), e_y = min(i_y+2,ly);
         T c1 = 0, c2 = 0;
         output = 0;
-        for (*t_y=s_y; *t_y<e_y; *t_y+=1) {
+        for (*t_y=s_y; *t_y<e_y; (*t_y)++) {
             T tmp = 0;
-            for (*t_x=s_x; *t_x<e_x; *t_x+=1) {
+            for (*t_x=s_x; *t_x<e_x; (*t_x)++) {
                 T val = input[idx];
                 int fn = isfinite(val);
                 tmp += (fn ? val : fn);

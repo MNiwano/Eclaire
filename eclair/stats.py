@@ -134,7 +134,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         If the input dtype is different, use a casted copy.
     filter : ndarray, default None
         array indicating which elements of data are used for calculation.
-        The value must be 1 for elements to use and 0 for elements to ignore.
+        The value must be nonzero for elements to use or 0 to ignore.
     memsave : bool, default False
         If True, split data and process it serially.
         Then, VRAM is saved, but speed may be slower.
