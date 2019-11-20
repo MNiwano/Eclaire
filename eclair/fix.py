@@ -25,7 +25,7 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
     mask : ndarray
         An array indicates bad pixel positions
         The shape must be same as image.
-        The value of bad pixel is 1, and the others is 0.
+        The value of bad pixel is Nonzero, and the others is 0.
         If all pixels are bad, raise ValueError.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
@@ -37,6 +37,10 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
     -------
     fixed : ndarray
         An array of images fixed bad pixel
+
+    Notes
+    -----
+    NaN is ignored in interpolation calculations, but is not fixed.
     '''
     if data.shape[-2:] != mask.shape[-2:]:
         raise ValueError('shape differs between data and mask')
@@ -49,18 +53,21 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
     y_len, x_len = data.shape[-2:]
     convolution = lambda data,out:conv_kernel(data,x_len,y_len,out)
 
-    filt = 1 - mask
     if overwrite_input:
-        fixed = data.view()
+        fixed = data
     else:
         fixed = data.copy()
-    cp.multiply(fixed,filt,out=fixed)
+
+    filt = 1 - mask
+    fixed *= filt
+
     dconv = cp.empty_like(data)
     nconv = cp.empty_like(filt)
+    
     while not filt.all():
         convolution(fixed,dconv)
         convolution(filt,nconv)
         fix_kernel(fixed,filt,dconv,nconv,fixed)
         cp.sign(nconv,out=filt)
-    del dconv, nconv, filt
+    
     return cp.squeeze(fixed)

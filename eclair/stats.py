@@ -10,11 +10,11 @@ import numpy    as np
 import cupy     as cp
 
 from param  import dtype
-from io     import fitswriter
+from io     import mkhdu
 from kernel import (
-    nonzerosum_kernel,
-    filterdsum_kernel,
-    filterdvar_kernel,
+    checkfinite,
+    filterdsum,
+    filterdvar,
     replace_kernel,
     median_kernel,
     updatefilt_kernel,
@@ -55,6 +55,8 @@ class SigClip:
             filt = cp.ones_like(data)
         else:
             filt = cp.asarray(filter,dtype=self.dtype)
+        
+        checkfinite(data,filt,filt)
 
         for _ in range(iter):
             filt = self.updatefilt(data,filt,width)
@@ -69,44 +71,56 @@ class SigClip:
     def updatefilt(self,data,filt,width):
         mean  = self.mean(data,filt,keepdims=True)
         sigma = self.sigma(data,mean,filt)
-
-        cent = self.center(mean,data,filt)
+        cent  = self.center(mean,data,filt)
         
         updatefilt_kernel(data,filt,cent,sigma,width,filt)
         
         return filt
     
     def sigma(self,data,mean,filt):
-        num = nonzerosum_kernel(filt,axis=self.axis,keepdims=True)
-        sqm = filterdvar_kernel(data,mean,filt,axis=self.axis,keepdims=True)
+        num = filt.sum(axis=self.axis,keepdims=True)
+        replace_kernel(num,0,1,num)
+        sqm = filterdvar(data,mean,filt,axis=self.axis,keepdims=True)
         cp.divide(sqm,num,out=sqm)
         return cp.sqrt(sqm,out=sqm)
 
     def mean(self,data,filt,keepdims=False):
-        num = nonzerosum_kernel(filt,axis=self.axis,keepdims=keepdims)
-        sum = filterdsum_kernel(data,filt,axis=self.axis,keepdims=keepdims)
+        num = filt.sum(axis=self.axis,keepdims=keepdims)
+        replace_kernel(num,0,1,num)
+        sum = filterdsum(data,filt,axis=self.axis,keepdims=keepdims)
         return cp.divide(sum,num,out=sum)
     
     def median(self,data,filt,keepdims=False):
-        y_len, x_len = data.shape[-2:]
+        if self.axis != 0:
+            msg = 'Only axis=0 is supported for median'
+            raise NotImplementedError(msg)
+
         nums = filt.sum(axis=0,keepdims=keepdims)
 
-        tmpd = replace_kernel(data,filt,data.max(axis=0))
+        tmpd = cp.where(filt,data,data.max(axis=0))
         tmpd.sort(axis=0)
 
-        result = median_kernel(tmpd,nums,y_len*x_len,nums)
+        result = median_kernel(tmpd,nums,nums)
         
         return result
 
-def combine(data,combine='mean',center='mean',iter=3,width=3.0,filter=None,
-        dtype=dtype,memsave=False):
+def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
+        iter=3,width=3.0,filter=None,dtype=dtype,memsave=False,**kwargs):
     '''
-    Calculate sigma-clipped mean or median for each pixels of images
+    Combine images and write to FITS file
 
     Parameters
     ----------
+    name : str
+        A path of output FITS file
+        Whether path like object is supported depends on
+        the version of Python and Astropy.
     data : 3D ndarray
         An array of images stacked along the 1st dimension (axis=0)
+    list : array-like, default None
+        Names of image to combine
+        These are written to the header.
+        If the string is path-like, only basename is used.
     combine : {'mean', 'median'}, default 'mean'
         An algorithm to combine images
     center : {'mean', 'median'}, default 'mean'
@@ -124,20 +138,19 @@ def combine(data,combine='mean',center='mean',iter=3,width=3.0,filter=None,
     memsave : bool, default False
         If True, split data and process it serially.
         Then, VRAM is saved, but speed may be slower.
-
-    Returns
-    -------
-    combined : 2D cupy.ndarray
-        Array of combined image
+    kwargs : keywards arguments
+        These are given to writeto method of HDU object
     '''
-    
+
     sigclip = SigClip(combine,center,dtype=dtype)
 
     nums, y_len, x_len = data.shape
     if memsave:
         lengthes = int(y_len/2), int(x_len/2)
         combined = cp.empty([y_len,x_len],dtype=dtype)
-        slices = tuple((slice(l),slice(l,None)) for l in lengthes)
+        slices = tuple(
+            (slice(l),slice(l,None)) for l in lengthes
+        )
         for yslice, xslice in product(*slices):
             if filter is None:
                 filt = None
@@ -148,40 +161,11 @@ def combine(data,combine='mean',center='mean',iter=3,width=3.0,filter=None,
             )
     else:
         combined = sigclip(data,iter,width,filter=filter)
-
-    return combined
-
-def imcombine(name,data,list=None,header=None,overwrite=False,**kwargs):
-    '''
-    Combine images and write to FITS file
-
-    Parameters
-    ----------
-    name : str
-        A path of output FITS file
-        Whether path like object is supported depends on
-        the version of Python and Astropy.
-    data : 3D ndarray
-        An array of images stacked along the 1st dimension (axis=0)
-    list : array-like, default None
-        Names of image to combine
-        These are written to the header.
-        If the string is path-like, only basename is used.
-    overwrite : bool, default False
-        If True, overwrite the output file if it exists.
-        Raises an IOError if False and the output file exists.
-    kwargs : keyward arguments
-        Additional keyword arguments to pass to the combine function
-        See also combine.
-    '''
-    nums = len(data)
-
-    combined = combine(data,**kwargs)
     
     if header is None:
         header = fits.Header()
 
-    if list:
+    if list is not None:
         if len(list) != nums:
             warnings.warn(
                 'Number of items is different between list and data'
@@ -196,6 +180,8 @@ def imcombine(name,data,list=None,header=None,overwrite=False,**kwargs):
             header[key.format(i)] = basename(f)
     header['NCOMBINE'] = nums
 
-    fitswriter(name,combined,header=header,overwrite=overwrite)
+    hdu = mkhdu(combined,header=header)
+    
+    hdu.writeto(name,**kwargs)
 
     print('Combine: {0:d} frames, Output: {1}'.format(nums,name))

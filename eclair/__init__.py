@@ -17,7 +17,7 @@ This module requires
 
 __all__ = [
     '__version__', 'reduction', 'FitsContainer',
-    'imalign', 'combine', 'imcombine', 'fixpix'
+    'imalign', 'imcombine', 'fixpix'
 ]
 
 import cupy as cp
@@ -30,7 +30,7 @@ from io import FitsContainer
 
 from align import imalign
 
-from stats import combine, imcombine
+from stats import imcombine
 
 from fix import fixpix
 

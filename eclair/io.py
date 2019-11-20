@@ -190,7 +190,7 @@ class FitsContainer:
         )
         self.__stack(iterator,len(self.list),**kwargs)
 
-    def write(self,outlist,overwrite=False,func=null,args=()):
+    def write(self,outlist,func=null,args=(),**kwargs):
         '''
         make FITS file with storing FITS header and data
 
@@ -200,15 +200,15 @@ class FitsContainer:
             list of output FITS paths
             raise ValueError if the length of this list is different
             from the number of images.
-        overwrite : bool, default False
-            If True, overwrite the output file if it exists.
-            Raises an IOError if False and the output file exists.
+        kwargs : keyward arguments
+            These are given to writeto method of HDU object
         '''
         if len(outlist) != len(self):
             msg = 'the length of outlist differs from the number of images'
             raise ValueError(msg)
         for i,(o,head,data) in enumerate(zip(outlist,self.header,self.data)):
-            fitswriter(o,data,header=head,overwrite=overwrite)
+            hdu = mkhdu(data,header=head)
+            hdu.writeto(o,**kwargs)
             func(i,*args)
 
     @classmethod
@@ -411,29 +411,3 @@ def fitsloader(name,hdu_index=0,**kwargs):
         result = split_hdu(hdul[hdu_index],**kwargs)
         
     return result
-
-def fitswriter(name,data,header=None,overwrite=False):
-    '''
-    Create FITS from given array
-
-    Parameters
-    ----------
-    name : str
-        path of FITS file
-        Whether path-like objects are supported depends on
-        the version of Python and Astropy.
-    data : ndarray
-    header : astropy.io.fits.Header, default None
-        data and header to FITS
-    overwrite : bool default False
-        If True, overwrite the output file if it exists.
-        Raises an IOError if False and the output file exists.
-
-    Notes
-    -----
-    This function is intended for use inside eclair.
-    It may be better to use astropy.io.fits.writeto etc. for an end-user.
-    '''
-    hdu = mkhdu(data,header=header,is_primary=True)
-
-    hdu.writeto(name,overwrite=overwrite)

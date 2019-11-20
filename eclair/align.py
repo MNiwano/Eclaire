@@ -4,7 +4,7 @@ import sys
 from itertools  import product
 
 if sys.version_info.major == 2:
-    from itertools import izip as zip
+    from itertools import izip as zip, imap as map
 
 import numpy as np
 import cupy  as cp
@@ -34,7 +34,7 @@ class Align:
             self.shift = self.__spline
             self.matx = Ms(x_len,dtype)
             if y_len == x_len:
-                self.maty = self.matx.view()
+                self.maty = self.matx
             else:
                 self.maty = Ms(y_len,dtype)
         elif interp == 'poly3':
@@ -56,7 +56,7 @@ class Align:
         if (y_len,x_len) != (self.y_len,self.x_len):
             message = 'shape of images is differ from {}'
             raise ValueError(message.format((self.y_len,self.x_len)))
-        if nums != len(shifts):
+        elif nums != len(shifts):
             raise ValueError('data and shifts do not match')
 
         xy_i = np.floor(shifts).astype(int)
@@ -95,8 +95,9 @@ class Align:
             dtype=self.dtype
         )
         shift_vector.dot(self.mat,out=shift_vector)
+        shift_mat = shift_vector.reshape(4,4)
 
-        poly_kernel(data,shift_vector,x_len-3,x_len,shifted[2:-1,2:-1])
+        poly_kernel(data,shift_mat,x_len-3,x_len,shifted[2:-1,2:-1])
 
         return shifted
 
@@ -133,7 +134,7 @@ def imalign(data,shifts,interp='spline3',dtype=dtype):
     
     Returns
     -------
-    align : 3D cupy.ndarray
+    aligned : 3D cupy.ndarray
         An array of images aligned and stacked along the 1st axis
     '''
     y_len, x_len = data.shape[-2:]
@@ -145,23 +146,21 @@ def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
         Mp[y*4+x,k*4+l] = (x-1)**l * (y-1)**k
-    Mp = np.linalg.solve(Mp,np.identity(16,dtype=dtype))
     Mp = cp.array(Mp,dtype=dtype)
-
-    return Mp
+    
+    return cp.linalg.inv(Mp)
 
 def Ms(ax_len,dtype):
     identity = lambda x:np.identity(x,dtype=dtype)
     Ms = 4 * identity(ax_len-2)
     Ms[1:,:-1] += identity(ax_len-3)
     Ms[:-1,1:] += identity(ax_len-3)
-    Ms = np.linalg.solve(Ms,identity(ax_len-2))
     Ms = cp.array(Ms,dtype=dtype)
 
-    return Ms
+    return cp.linalg.inv(Ms)
 
 def spline1d(data,d,mat,out):
     v = data[2:]+data[:-2]-2*data[1:-1]
     u = cp.zeros_like(data)
-    mat.dot(v,out=u[1:-1])
+    cp.dot(mat,v,out=u[1:-1])
     spline_kernel(u,data,1-d,out.shape[-1],out)
