@@ -16,13 +16,14 @@ This module requires
 '''
 
 __all__ = [
-    '__version__', 'reduction', 'FitsContainer',
+    '__version__', 'set_dtype', 'reduction', 'FitsContainer',
     'imalign', 'imcombine', 'fixpix'
 ]
 
 import cupy as cp
 
-from param import __version__, dtype
+import common
+from common import __version__
 
 from kernel import reduction_kernel
 
@@ -34,7 +35,18 @@ from stats import imcombine
 
 from fix import fixpix
 
-def reduction(image,bias,dark,flat,out=None,dtype=dtype):
+def set_dtype(dtype):
+    '''
+    Change the default dtype used by all functions
+    and classes in this package.
+
+    Parameters
+    ----------
+    dtype : str or dtype
+    '''
+    common.dtype = dtype
+
+def reduction(image,bias,dark,flat,out=None,dtype=None):
     '''
     This function is equal to the equation:
     out = (image - bias - dark) / flat, but needs less memory.
@@ -52,12 +64,16 @@ def reduction(image,bias,dark,flat,out=None,dtype=dtype):
         expected output, but the type will be cast if necessary.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
+        If None, this value will be usually "float32", 
+        but this can be changed with eclair.set_dtype.
         If the input dtype is different, use a casted copy.
     
     Returns
     -------
     out : cupy.ndarray
     '''
+    dtype = common.judge_dtype(dtype)
+
     image = cp.asarray(image,dtype=dtype)
     bias  = cp.asarray(bias,dtype=dtype)
     dark  = cp.asarray(dark,dtype=dtype)

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from __future__ import division
+
 from itertools  import product
 from os.path    import basename
 import warnings
@@ -9,12 +11,13 @@ from astropy.time import Time
 import numpy    as np
 import cupy     as cp
 
-from param  import dtype
+from common import judge_dtype
 from io     import mkhdu
 from kernel import (
     checkfinite,
     filterdsum,
     filterdvar,
+    default_mean,
     replace_kernel,
     median_kernel,
     updatefilt_kernel,
@@ -25,11 +28,19 @@ from kernel import (
 #############################
 
 class SigClip:
-    def __init__(self,combine='mean',center='mean',
-            axis=0,dtype=dtype,returnfilter=False):
+    def __init__(
+        self,
+        combine='mean',
+        center='mean',
+        axis=0,
+        default=0,
+        dtype=None,
+        returnfilter=False
+    ):
 
         self.axis    = axis
-        self.dtype   = dtype
+        self.default = default
+        self.dtype   = judge_dtype(dtype)
         self.rtnfilt = returnfilter
 
         errormsg = '{0} is not impremented as {1}'
@@ -78,17 +89,16 @@ class SigClip:
         return filt
     
     def sigma(self,data,mean,filt):
-        num = filt.sum(axis=self.axis,keepdims=True)
-        replace_kernel(num,0,1,num)
-        sqm = filterdvar(data,mean,filt,axis=self.axis,keepdims=True)
-        cp.divide(sqm,num,out=sqm)
-        return cp.sqrt(sqm,out=sqm)
+        fnum = filt.sum(axis=self.axis,keepdims=True)
+        replace_kernel(fnum,0,1,fnum)
+        fsqm = filterdvar(data,mean,filt,axis=self.axis,keepdims=True)
+        cp.divide(fsqm,fnum,out=fsqm)
+        return cp.sqrt(fsqm,out=fsqm)
 
     def mean(self,data,filt,keepdims=False):
-        num = filt.sum(axis=self.axis,keepdims=keepdims)
-        replace_kernel(num,0,1,num)
-        sum = filterdsum(data,filt,axis=self.axis,keepdims=keepdims)
-        return cp.divide(sum,num,out=sum)
+        fnum = filt.sum(axis=self.axis,keepdims=keepdims)
+        fsum = filterdsum(data,filt,axis=self.axis,keepdims=keepdims)
+        return default_mean(fsum,fnum,self.default,fsum)
     
     def median(self,data,filt,keepdims=False):
         if self.axis != 0:
@@ -100,12 +110,24 @@ class SigClip:
         tmpd = cp.where(filt,data,data.max(axis=0))
         tmpd.sort(axis=0)
 
-        result = median_kernel(tmpd,nums,nums)
+        result = median_kernel(tmpd,nums,self.default,nums)
         
         return result
 
-def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
-        iter=3,width=3.0,filter=None,dtype=dtype,memsave=False,**kwargs):
+def imcombine(
+    name,
+    data,
+    list=None,
+    header=None,
+    combine='mean',
+    center='mean',
+    iter=3,
+    width=3.0,
+    filter=None,
+    dtype=None,
+    memsave=False,
+    **kwargs
+):
     '''
     Combine images and write to FITS file
 
@@ -131,6 +153,8 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         A clipping width in sigma units
     dtype : str or dtype, default 'float32'
         dtype of array used internally
+        If None, this value will be usually "float32", 
+        but this can be changed with eclair.set_dtype.
         If the input dtype is different, use a casted copy.
     filter : ndarray, default None
         array indicating which elements of data are used for calculation.
@@ -146,7 +170,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
 
     nums, y_len, x_len = data.shape
     if memsave:
-        lengthes = int(y_len/2), int(x_len/2)
+        lengthes = y_len//2, x_len//2
         combined = cp.empty([y_len,x_len],dtype=dtype)
         slices = tuple(
             (slice(l),slice(l,None)) for l in lengthes
@@ -179,7 +203,7 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
         for i,f in enumerate(list,1):
             header[key.format(i)] = basename(f)
     header['NCOMBINE'] = nums
-
+    
     hdu = mkhdu(combined,header=header)
     
     hdu.writeto(name,**kwargs)

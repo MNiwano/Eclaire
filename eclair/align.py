@@ -4,12 +4,12 @@ import sys
 from itertools  import product
 
 if sys.version_info.major == 2:
-    from itertools import izip as zip, imap as map
+    from future_builtins import zip, map
 
 import numpy as np
 import cupy  as cp
 
-from param import dtype, null
+from common import null, judge_dtype
 
 from kernel import (
     neighbor_kernel,
@@ -26,20 +26,20 @@ class Align:
 
     interp_choices = ['spline3','poly3','linear','neighbor']
     
-    def __init__(self,x_len,y_len,interp='spline3',dtype=dtype):
-        self.x_len  = x_len
-        self.y_len  = y_len
-        self.dtype  = dtype
+    def __init__(self,x_len,y_len,interp='spline3',dtype=None):
+        self.x_len = x_len
+        self.y_len = y_len
+        self.dtype = judge_dtype(dtype)
         if   interp == 'spline3':
             self.shift = self.__spline
-            self.matx = Ms(x_len,dtype)
+            self.matx = Ms(x_len,self.dtype)
             if y_len == x_len:
                 self.maty = self.matx
             else:
-                self.maty = Ms(y_len,dtype)
+                self.maty = Ms(y_len,self.dtype)
         elif interp == 'poly3':
             self.shift = self.__poly
-            self.mat = Mp(dtype)
+            self.mat = Mp(self.dtype)
         elif interp == 'linear':
             self.shift = self.__linear
         elif interp == 'neighbor':
@@ -96,7 +96,7 @@ class Align:
         shift_mat = shift_vector.reshape(4,4)
 
         poly_kernel(data,shift_mat,shifted[2:-1,2:-1])
-
+        
         return shifted
 
     def __spline(self,data,dx,dy):
@@ -106,7 +106,7 @@ class Align:
         spline1d(tmpd.T,dy,self.maty,shifted[1:,1:])
         return shifted
 
-def imalign(data,shifts,interp='spline3',dtype=dtype):
+def imalign(data,shifts,interp='spline3',dtype=None):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
@@ -126,8 +126,10 @@ def imalign(data,shifts,interp='spline3',dtype=dtype):
             poly3    - 3rd order interior polynomial
             linear   - bilinear
             neighbor - nearest neighbor
-    dtype : str or dtype, default 'float32'
+    dtype : str or dtype, default None
         dtype of array used internally
+        If None, this value will be usually "float32", 
+        but this can be changed with eclair.set_dtype.
         If the dtype of input array is different, use a casted copy.
     
     Returns
@@ -144,9 +146,9 @@ def Mp(dtype):
     Mp = np.empty([16,16],dtype=dtype)
     for y,x,k,l in product(range(4),repeat=4):
         Mp[y*4+x,k*4+l] = (x-1)**l * (y-1)**k
-    Mp = cp.array(Mp,dtype=dtype)
+    Mp = cp.array(np.linalg.inv(Mp),dtype=dtype)
     
-    return cp.linalg.inv(Mp)
+    return Mp
 
 def Ms(ax_len,dtype):
     identity = lambda x:np.identity(x,dtype=dtype)
@@ -158,7 +160,7 @@ def Ms(ax_len,dtype):
     return cp.linalg.inv(Ms)
 
 def spline1d(data,d,mat,out):
-    v = data[2:]+data[:-2]-2*data[1:-1]
-    u = cp.zeros_like(data)
-    cp.dot(mat,v,out=u[1:-1])
-    spline_kernel(u,data,1-d,out)
+    v_vec = (data[2:]-data[1:-1])-(data[1:-1]-data[:-2])
+    u_vec = cp.zeros_like(data)
+    cp.dot(mat,v_vec,out=u_vec[1:-1])
+    spline_kernel(u_vec,data,1-d,out)

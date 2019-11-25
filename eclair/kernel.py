@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 '''
 This module contains cupy.ElementwiseKernel or cupy.ReductionKernel instances 
@@ -47,12 +48,12 @@ poly_kernel = ElementwiseKernel(
         int width = input.shape()[1] - 3;
         int i_x = i % width, i_y = i / width;
         int idx1[2], idx2[2];
-        int *y1 = &(idx1[1]), *x1 = &(idx1[2]);
-        int *y2 = &(idx2[1]), *x2 = &(idx2[2]);
+        int *y1 = &(idx1[0]), *x1 = &(idx1[1]);
+        int *y2 = &(idx2[0]), *x2 = &(idx2[1]);
         output = 0;
-        for (*y1=0,*y2=i_y; *y1<=3; (*y1)++,(*y2)++) {
+        for (*y1=0, *y2=i_y; *y1<=3; (*y1)++, (*y2)++) {
             T tmp = 0;
-            for (*x1=0,*x2=i_x; *x1<=3; (*x1)++,(*x2)++) {
+            for (*x1=0, *x2=i_x; *x1<=3; (*x1)++, (*x2)++) {
                 tmp += mat[idx1] * input[idx2];
             }
             output += tmp;
@@ -97,7 +98,7 @@ replace_kernel = ElementwiseKernel(
 filterdsum = ReductionKernel(
     in_params='T x, T f',
     out_params='T y',
-    map_expr='((int)f ? x : f)',
+    map_expr='(f ? x : f)',
     reduce_expr='a+b',
     post_map_expr='y=a',
     identity='0',
@@ -116,25 +117,36 @@ filterdvar = ReductionKernel(
         __device__ T square(T x, T m, T f) {
             T dev = x-m;
             T var = dev*dev;
-            return ((int)f ? var : f);
+            return (f ? var : f);
         }
     ''',
     name='filterdvar'
 )
 
+default_mean = ElementwiseKernel(
+    in_params='T x, T n, T d',
+    out_params='T z',
+    operation='''
+        int f = (n==0);
+        T t = x /(n+f);
+        z = (f ? t : d);
+    ''',
+    name='default_mean'
+)
+
 median_kernel = ElementwiseKernel(
-    in_params='raw T input, T nums',
+    in_params='raw T input, T nums, T d',
     out_params='T output',
     operation='''
         int n = nums;
-        int f = n>0;
+        int f = n!=0;
         n -= f;
         int c = n/2;
         int m = _ind.size();
         int i_1 = i + c*m;
         int i_2 = i + (n-c)*m;
-        T s = input[i_1] + input[i_2];
-        output = f * s/2;
+        T s = (input[i_1] + input[i_2])/2;
+        output = (f ? s : d);
     ''',
     name='median'
 )
@@ -157,7 +169,7 @@ mask2filter = ElementwiseKernel(
 )
 
 fix_kernel = ElementwiseKernel(
-    in_params='T x ,T f, T d, T n',
+    in_params='T x ,F f, T d, F n',
     out_params='T z',
     operation='''
         T val = d / (n+(n==0));

@@ -4,21 +4,22 @@ import sys
 from os.path import isfile
 
 if sys.version_info.major == 2:
-    from itertools import izip as zip, imap as map
+    from future_builtins import zip, map
+    import __builtin__ as builtins
+else:
+    import builtins
 
 from astropy.io   import fits
 from astropy.time import Time
 import cupy  as cp
 import numpy as np
 
-from param import __version__, __update__, dtype, null
+from common import __version__, __update__, null, judge_dtype
 
 origin = (
     'Eclair v{version} {date}'.format(version=__version__,date=__update__),
     'FITS file originator'
 )
-
-_list = list
 
 class FitsContainer:
     '''
@@ -46,7 +47,7 @@ class FitsContainer:
     list, header, and data are sorted in the same order.
     '''
 
-    def __init__(self,list,dtype=dtype):
+    def __init__(self,list,dtype=None):
         '''
         Parameters
         ----------
@@ -55,11 +56,13 @@ class FitsContainer:
             load() method refer this list to load FITS file.
             Whether path like object is supported depends on 
             the version of Python and Astropy.
-        dtype : str or dtype, default 'float32'
+        dtype : str or dtype, default None
             dtype of cupy.ndarray
+            If None, this value will be usually "float32", 
+            but this can be changed with eclair.set_dtype.
         '''
-        self.list  = _list(list)
-        self.dtype = dtype
+        self.list  = builtins.list(list)
+        self.dtype = judge_dtype(dtype)
 
         self.slices = dict(x_start=0,x_stop=None,y_start=0,y_stop=None)
         
@@ -144,11 +147,11 @@ class FitsContainer:
             data[i] = data[j]
         self.data = data[:len(indices)]
 
-    def __stack(self,iterator,length,func=null,args=()):
-        enumerated = enumerate(iterator)
+    def __stack(self,iterable,length,func=null,args=()):
+        iterator = enumerate(iterable)
         
         try:
-            i, (head, data) = next(enumerated)
+            i, (head, data) = next(iterator)
 
             y_len, x_len = data.shape
             array = cp.empty([length,y_len,x_len],dtype=self.dtype)
@@ -156,7 +159,7 @@ class FitsContainer:
             self.header[i] = head
             array[i].set(data)
             func(i,*args)
-            for i, (head, data) in enumerated:
+            for i, (head, data) in iterator:
                 self.header[i] = head
                 array[i].set(data)
                 func(i,*args)
@@ -184,11 +187,11 @@ class FitsContainer:
         if check_exists:
             self.list = filter(isfile,self.list)
 
-        iterator = map(
+        iterable = map(
             lambda x:fitsloader(x,dtype=self.dtype,xp=np,**self.slices),
             self.list
         )
-        self.__stack(iterator,len(self.list),**kwargs)
+        self.__stack(iterable,len(self.list),**kwargs)
 
     def write(self,outlist,func=null,args=(),**kwargs):
         '''
@@ -212,7 +215,7 @@ class FitsContainer:
             func(i,*args)
 
     @classmethod
-    def from_array(cls,array,list=None,headers=None,dtype=dtype):
+    def from_array(cls,array,list=None,headers=None,dtype=None):
         '''
         Make instance from given array
 
@@ -224,8 +227,9 @@ class FitsContainer:
             List of FITS file name
         headers : array-like, default None
             List of FITS file header
-        dtype : str or dtype, default 'float32'
+        dtype : str or dtype, default None
             dtype of cupy.ndarray
+            See also __init__.
 
         Returns
         -------
@@ -245,22 +249,23 @@ class FitsContainer:
             else:
                 raise ValueError('headers does not match array')
 
-        instance.data = cp.asarray(array,dtype=dtype)
+        instance.data = cp.asarray(array,dtype=instance.dtype)
 
         return instance
 
     @classmethod
-    def from_hduls(cls,hduls,hdu_index=0,dtype=dtype,**slices):
+    def from_hduls(cls,hduls,hdu_index=0,dtype=None,**slices):
         '''
         Make instance from sequence of HDULists
 
         Parameters
         ----------
-        hduls : sequence of astropy.io.fits.HDUList
+        hduls : sequence of HDUList
         hdu_index : int, default 0
             Index in HDUList of HDU
-        dtype : str or dtype, default 'float32'
+        dtype : str or dtype, default None
             dtype of cupy.ndarray
+            See also __init__.
         slices : keyward arguments
             Arguments given to the setslice method
         
@@ -268,19 +273,19 @@ class FitsContainer:
         -------
         instance : FitsContainer
         '''
-        instance = cls([hdul.filename() for hdu in hduls],dtype=dtype)
+        instance = cls([hdul.filename() for hdul in hduls],dtype=dtype)
         instance.setslice(**slices)
 
-        iterator = map(
+        iterable = map(
             lambda hdul:split_hdu(hdul[hdu_index],dtype=dtype,xp=np,**slices),
             hduls
         )
-        iterator.__stack(iterator,len(hduls))
+        instance.__stack(iterable,len(hduls))
 
         return instance
 
     @classmethod
-    def from_hdus(cls,hdus,list=None,dtype=dtype,**slices):
+    def from_hdus(cls,hdus,list=None,dtype=None,**slices):
         '''
         Make instance from sequence of HDUs
 
@@ -289,8 +294,9 @@ class FitsContainer:
         hdus : sequence of astropy HDU objects
         list : array-like
             sequence of FITS file names
-        dtype : str or dtype, default 'float32'
+        dtype : str or dtype, default None
             dtype of cupy.ndarray
+            See also __init__.
         slices : keyward arguments
             Arguments given to the setslice method
 
@@ -307,14 +313,15 @@ class FitsContainer:
         instance = cls(list,dtype=dtype)
         instance.setslice(**slices)
 
-        iterator = map(
-            lambda hdu:split_hdu(hdu,dtype=dtype,xp=np,**slices),hdus
+        iterable = map(
+            lambda hdu:split_hdu(hdu,dtype=dtype,xp=np,**slices),
+            hdus
         )
-        iterator.__stack(iterator,nums)
+        instance.__stack(iterable,nums)
 
         return instance
 
-def split_hdu(hdu,dtype=dtype,xp=cp,
+def split_hdu(hdu,dtype=None,xp=cp,
         x_start=0,x_stop=None,y_start=0,y_stop=None):
     '''
     Split HDU object into header and data
@@ -322,8 +329,10 @@ def split_hdu(hdu,dtype=dtype,xp=cp,
     Parameters
     ----------
     hdu : astropy HDU object
-    dtype : str or dtype, default 'float32'
-        dtype of array returned
+    dtype : str or dtype, default None
+        dtype of cupy.ndarray
+        If None, this value will be usually "float32", 
+        but this can be changed with eclair.set_dtype.
     xp : module object of numpy or cp, default cupy
         Whether the return value is numpy.ndarray or cupy.ndarray
     x_start : int, default 0
@@ -337,9 +346,12 @@ def split_hdu(hdu,dtype=dtype,xp=cp,
     header : astropy.io.fits.Header
     data : ndarray
     '''
-    
+
     header = hdu.header
-    data = xp.asarray(hdu.data[y_start:y_stop,x_start:x_stop],dtype=dtype)
+    data = xp.asarray(
+        hdu.data[y_start:y_stop,x_start:x_stop],
+        dtype=judge_dtype(dtype)
+    )
 
     try:
         header['CRPIX1'] -= x_start
@@ -349,7 +361,7 @@ def split_hdu(hdu,dtype=dtype,xp=cp,
 
     return header, data
 
-def mkhdu(data,header=None,is_primary=True):
+def mkhdu(data,header=None,hdu_class=fits.PrimaryHDU):
     '''
     Creates HDU from given data
 
@@ -358,8 +370,8 @@ def mkhdu(data,header=None,is_primary=True):
     data : ndarray
     header : astropy.io.fits.Header, default None
         data and header to HDU
-    is_primary : bool, default True
-        If True, create as PrimaryHDU.
+    hdu_class : class, default astropy.io.fits.PrimaryHDU
+        HDU class
 
     Returns
     -------
@@ -368,22 +380,17 @@ def mkhdu(data,header=None,is_primary=True):
     Notes
     -----
     This function is intended for use inside eclair.
-    It may be better to call astropy.io.fits.PrimaryHDU etc.
-    directly for an end-user.
+    It may be better to call astropy HDU class dilectly for an end-user.
     '''
-    if is_primary:
-        HDUclass = fits.PrimaryHDU
-    else:
-        HDUclass = fits.ImageHDU
-
-    hdu = HDUclass(data=cp.asnumpy(data))
+    
+    hdu = hdu_class(data=cp.asnumpy(data))
     now = Time.now().isot
 
     hdu.header['ORIGIN'] = origin
     hdu.header['DATE']   = (now,'Date HDU was created')
     if header is not None:
         hdu.header.extend(header)
-
+        
     return hdu
 
 def fitsloader(name,hdu_index=0,**kwargs):

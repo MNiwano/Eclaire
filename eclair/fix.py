@@ -2,9 +2,10 @@
 
 import cupy     as cp
 
-from param  import dtype
+from common import judge_dtype
 from kernel import (
     mask2filter,
+    checkfinite,
     fix_kernel,
     conv_kernel,
 )
@@ -13,7 +14,7 @@ from kernel import (
 #   fixpix
 #############################
 
-def fixpix(data,mask,dtype=dtype,overwrite_input=False):
+def fixpix(data,mask,out=None,dtype=None,fix_NaN=False):
     '''
     fill the bad pixel with mean of surrounding pixels
 
@@ -28,11 +29,17 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
         The shape must be same as image.
         The value of bad pixel is nonzero, and the others is 0.
         If all pixels are bad, raise ValueError.
+    out : cupy.ndarray, default None
+        Alternate output array in which to place the result. The default
+        is ``None``; if provided, it must have the same shape as the
+        expected output, but the type will be cast if necessary.
     dtype : str or dtype, default 'float32'
         dtype of array used internally
+        If None, this value will be usually "float32", 
+        but this can be changed with eclair.set_dtype.
         If the input dtype is different, use a casted copy.
-    overwrite_input : bool, default False
-        If True, input data is overwrited, but VRAM is saved.
+    fix_NaN : bool, default False
+        If true, fix NaN pixel even if it's not bad pixel in the mask.
 
     Returns
     -------
@@ -41,8 +48,10 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
 
     Notes
     -----
-    NaN is ignored in interpolation calculations, but is not fixed.
+    NaN is ignored in interpolation calculations,
+    but is not fixed if fix_NaN is False.
     '''
+    dtype = judge_dtype(dtype)
     if data.shape[-2:] != mask.shape[-2:]:
         raise ValueError('shape differs between data and mask')
     elif mask.all():
@@ -53,21 +62,23 @@ def fixpix(data,mask,dtype=dtype,overwrite_input=False):
 
     convolution = lambda data,out:conv_kernel(data,out)
 
-    if overwrite_input:
-        fixed = data
-    else:
-        fixed = data.copy()
+    if out is None:
+        out = cp.empty_like(data)
+    cp.copyto(out,data)
 
     filt = mask2filter(mask)
-    fixed *= filt
+    if fix_NaN:
+        filt = checkfinite(data,filt)
 
-    dconv = cp.empty_like(data)
+    out *= filt
+
+    dconv = cp.empty_like(out)
     nconv = cp.empty_like(filt)
     
     while not filt.all():
-        convolution(fixed,dconv)
+        convolution(out,dconv)
         convolution(filt,nconv)
-        fix_kernel(fixed,filt,dconv,nconv,fixed)
+        fix_kernel(out,filt,dconv,nconv,out)
         cp.sign(nconv,out=filt)
     
-    return cp.squeeze(fixed)
+    return cp.squeeze(out)
