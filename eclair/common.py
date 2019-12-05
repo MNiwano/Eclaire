@@ -5,8 +5,8 @@ __update__  = '25 October 2019'
 
 dtype = 'float32'
 
-def null(*args):
-    pass
+null = lambda *args : None
 
-def judge_dtype(arg):
-    return dtype if (arg is None) else arg
+judge_dtype = lambda x : (
+    dtype if (x is None) else x
+)

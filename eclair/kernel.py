@@ -129,7 +129,7 @@ default_mean = ElementwiseKernel(
     operation='''
         int f = (n==0);
         T t = x /(n+f);
-        z = (f ? t : d);
+        z = (f ? d : t);
     ''',
     name='default_mean'
 )

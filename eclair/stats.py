@@ -14,6 +14,7 @@ import cupy     as cp
 from common import judge_dtype
 from io     import mkhdu
 from kernel import (
+    mask2filter,
     checkfinite,
     filterdsum,
     filterdvar,
@@ -28,20 +29,13 @@ from kernel import (
 #############################
 
 class SigClip:
-    def __init__(
-        self,
-        combine='mean',
-        center='mean',
-        axis=0,
-        default=0,
-        dtype=None,
-        returnfilter=False
-    ):
+    def __init__(self, combine='mean', center='mean', axis=0, default=0,
+        dtype=None, returnmask=False):
 
         self.axis    = axis
         self.default = default
         self.dtype   = judge_dtype(dtype)
-        self.rtnfilt = returnfilter
+        self.rtnmask = returnmask
 
         errormsg = '{0} is not impremented as {1}'
 
@@ -59,23 +53,24 @@ class SigClip:
         else:
             raise ValueError(errormsg.format(combine,'combine'))
 
-    def __call__(self,data,iter=3,width=3.0,filter=None):
+    def __call__(self,data,iter=3,width=3.0,mask=None,keepdims=False):
         data = cp.asarray(data,dtype=self.dtype)
 
-        if filter is None:
+        if mask is None:
             filt = cp.ones_like(data)
         else:
-            filt = cp.asarray(filter,dtype=self.dtype)
+            mask = cp.array(mask,dtype=self.dtype)
+            filt = mask2filter(mask,mask)
         
         checkfinite(data,filt,filt)
 
         for _ in range(iter):
             filt = self.updatefilt(data,filt,width)
 
-        if self.rtnfilt:
-            return filt
+        if self.rtnmask:
+            return mask2filter(filt,filt)
 
-        result = self.combine(data,filt)
+        result = self.combine(data,filt,keepdims=keepdims)
 
         return result
 
@@ -90,7 +85,6 @@ class SigClip:
     
     def sigma(self,data,mean,filt):
         fnum = filt.sum(axis=self.axis,keepdims=True)
-        replace_kernel(fnum,0,1,fnum)
         fsqm = filterdvar(data,mean,filt,axis=self.axis,keepdims=True)
         cp.divide(fsqm,fnum,out=fsqm)
         return cp.sqrt(fsqm,out=fsqm)
@@ -114,20 +108,8 @@ class SigClip:
         
         return result
 
-def imcombine(
-    name,
-    data,
-    list=None,
-    header=None,
-    combine='mean',
-    center='mean',
-    iter=3,
-    width=3.0,
-    filter=None,
-    dtype=None,
-    memsave=False,
-    **kwargs
-):
+def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
+    iter=3,width=3.0,mask=None,dtype=None,memsave=False,**kwargs):
     '''
     Combine images and write to FITS file
 
@@ -156,9 +138,9 @@ def imcombine(
         If None, this value will be usually "float32", 
         but this can be changed with eclair.set_dtype.
         If the input dtype is different, use a casted copy.
-    filter : ndarray, default None
-        array indicating which elements of data are used for calculation.
-        The value must be nonzero for elements to use or 0 to ignore.
+    mask : ndarray, default None
+        array indicating which elements of data are masked for calculation.
+        The value must be 0 for elements to use or nonzero to ignore.
     memsave : bool, default False
         If True, split data and process it serially.
         Then, VRAM is saved, but speed may be slower.
@@ -176,15 +158,15 @@ def imcombine(
             (slice(l),slice(l,None)) for l in lengthes
         )
         for yslice, xslice in product(*slices):
-            if filter is None:
-                filt = None
+            if mask is None:
+                tmpm = None
             else:
-                filt = filter[:,yslice,xslice]
+                tmpm = mask[:,yslice,xslice]
             combined[yslice,xslice] = sigclip(
-                data[:,yslice,xslice],iter,width,filter=filt
+                data[:,yslice,xslice],iter,width,mask=tmpm
             )
     else:
-        combined = sigclip(data,iter,width,filter=filter)
+        combined = sigclip(data,iter,width,mask=mask)
     
     if header is None:
         header = fits.Header()
