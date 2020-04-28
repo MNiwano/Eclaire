@@ -20,7 +20,7 @@ If you want to try it, read readme.pdf.
 
 ## Components
 * **eclair**  
-    a source file of package
+    source files of the package
 * **readme.pdf**  
     a manual of reduction.ipynb and fitsget.ipynb
 * **reduction.ipynb**  
