@@ -4,9 +4,9 @@ import cupy     as cp
 
 from common import judge_dtype
 from kernel import (
-    mask2filter,
+    elementwise_not,
     checkfinite,
-    fix_kernel,
+    fix_core,
     conv_kernel,
 )
 
@@ -66,7 +66,7 @@ def fixpix(data,mask,out=None,dtype=None,fix_NaN=False):
         out = cp.empty_like(data)
     cp.copyto(out,data)
 
-    filt = mask2filter(mask)
+    filt = elementwise_not(mask)
     if fix_NaN:
         filt = checkfinite(data,filt)
 
@@ -78,7 +78,7 @@ def fixpix(data,mask,out=None,dtype=None,fix_NaN=False):
     while not filt.all():
         convolution(out,dconv)
         convolution(filt,nconv)
-        fix_kernel(out,filt,dconv,nconv,out)
+        fix_core(out,filt,dconv,nconv,out)
         cp.sign(nconv,out=filt)
     
     return cp.squeeze(out)

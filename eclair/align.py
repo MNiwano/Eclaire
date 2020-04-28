@@ -12,10 +12,11 @@ import cupy  as cp
 from common import null, judge_dtype
 
 from kernel import (
-    neighbor_kernel,
-    linear_kernel,
-    poly_kernel,
-    spline_kernel,
+    neighbor_core,
+    linear_core,
+    poly_core,
+    solve_tridiag,
+    spline_core,
 )
 
 #############################
@@ -31,15 +32,12 @@ class Align:
         self.y_len = y_len
         self.dtype = judge_dtype(dtype)
         if   interp == 'spline3':
+            self.vecx = mkvec(x_len,self.dtype)
+            self.vecy = mkvec(y_len,self.dtype)
             self.shift = self.__spline
-            self.matx = Ms(x_len,self.dtype)
-            if y_len == x_len:
-                self.maty = self.matx
-            else:
-                self.maty = Ms(y_len,self.dtype)
         elif interp == 'poly3':
+            self.__polyinit()
             self.shift = self.__poly
-            self.mat = Mp(self.dtype)
         elif interp == 'linear':
             self.shift = self.__linear
         elif interp == 'neighbor':
@@ -75,12 +73,12 @@ class Align:
 
     def __neighbor(self,data,dx,dy):
         shifted = cp.empty_like(data)
-        neighbor_kernel(data,dx,dy,shifted)
+        neighbor_core(data,dx,dy,shifted)
         return shifted
 
     def __linear(self,data,dx,dy):
         shifted = self.__neighbor(data,dx,dy)
-        linear_kernel(data,dx,dy,shifted[1:,1:])
+        linear_core(data,dx,dy,shifted[1:,1:])
         return shifted
     
     def __poly(self,data,dx,dy):
@@ -95,16 +93,22 @@ class Align:
         shift_vector.dot(self.mat,out=shift_vector)
         shift_mat = shift_vector.reshape(4,4)
 
-        poly_kernel(data,shift_mat,shifted[2:-1,2:-1])
+        poly_core(data,shift_mat,shifted[2:-1,2:-1])
         
         return shifted
 
     def __spline(self,data,dx,dy):
         shifted = self.__neighbor(data,dx,dy)
         tmpd = cp.empty([self.x_len-1,self.y_len],dtype=self.dtype)
-        spline1d(data.T,dx,self.matx,tmpd)
-        spline1d(tmpd.T,dy,self.maty,shifted[1:,1:])
+        spline1d(data.T,dx,self.vecx,tmpd)
+        spline1d(tmpd.T,dy,self.vecy,shifted[1:,1:])
         return shifted
+
+    def __polyinit(self):
+        mat = np.empty([16,16],dtype=self.dtype)
+        for y,x,k,l in product(range(4),repeat=4):
+            mat[y*4+x,k*4+l] = (x-1)**l * (y-1)**k
+        self.mat = cp.array(np.linalg.inv(mat),dtype=self.dtype)
 
 def imalign(data,shifts,interp='spline3',dtype=None):
     '''
@@ -142,25 +146,21 @@ def imalign(data,shifts,interp='spline3',dtype=None):
 
     return func(data,shifts)
 
-def Mp(dtype):
-    Mp = np.empty([16,16],dtype=dtype)
-    for y,x,k,l in product(range(4),repeat=4):
-        Mp[y*4+x,k*4+l] = (x-1)**l * (y-1)**k
-    Mp = cp.array(np.linalg.inv(Mp),dtype=dtype)
-    
-    return Mp
+def mkvec(n,dtype):
+    asarray = lambda x:cp.asarray(x,dtype=dtype)
 
-def Ms(ax_len,dtype):
-    identity = lambda x:np.identity(x,dtype=dtype)
-    Ms = 4 * identity(ax_len-2)
-    Ms[1:,:-1] += identity(ax_len-3)
-    Ms[:-1,1:] += identity(ax_len-3)
-    Ms = cp.array(Ms,dtype=dtype)
+    vec1 = cp.full(n-2,4,dtype=dtype)
+    vec2 = cp.ones(n-3,dtype=dtype)
 
-    return cp.linalg.inv(Ms)
+    for i in range(n-3):
+        vec2[i] /= vec1[i]
+        vec1[i+1] -= vec2[i]
 
-def spline1d(data,d,mat,out):
-    v_vec = (data[2:]-data[1:-1])-(data[1:-1]-data[:-2])
-    u_vec = cp.zeros_like(data)
-    cp.dot(mat,v_vec,out=u_vec[1:-1])
-    spline_kernel(u_vec,data,1-d,out)
+    return asarray(vec1), asarray(vec2)
+
+def spline1d(data,d,vec,out):
+    v1, v2 = vec
+    u = cp.zeros_like(data)
+    u[1:-1] = (data[2:]-data[1:-1])-(data[1:-1]-data[:-2])
+    solve_tridiag(v1,v2,u[1:-1],size=u.shape[1])
+    spline_core(u,data,1-d,out)

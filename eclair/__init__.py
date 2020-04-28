@@ -37,14 +37,14 @@ from fix import fixpix
 
 def set_dtype(dtype):
     '''
-    Change the default dtype used by all functions
+    Change the default dtype used in all functions
     and classes in this package.
 
     Parameters
     ----------
     dtype : str or dtype
     '''
-    common.dtype = dtype
+    common.dtype = cp.dtype(dtype)
 
 def reduction(image,bias,dark,flat,out=None,dtype=None):
     '''
@@ -73,11 +73,12 @@ def reduction(image,bias,dark,flat,out=None,dtype=None):
     out : cupy.ndarray
     '''
     dtype = common.judge_dtype(dtype)
+    asarray = lambda x : cp.asarray(x,dtype=dtype)
 
-    image = cp.asarray(image,dtype=dtype)
-    bias  = cp.asarray(bias,dtype=dtype)
-    dark  = cp.asarray(dark,dtype=dtype)
-    flat  = cp.asarray(flat,dtype=dtype)
+    image = asarray(image)
+    bias  = asarray(bias)
+    dark  = asarray(dark)
+    flat  = asarray(flat)
 
     if out is None:
         out = cp.empty(

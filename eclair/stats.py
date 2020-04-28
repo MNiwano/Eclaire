@@ -14,19 +14,21 @@ import cupy     as cp
 from common import judge_dtype
 from io     import mkhdu
 from kernel import (
-    mask2filter,
+    elementwise_not,
     checkfinite,
-    filterdsum,
-    filterdvar,
+    filteredsum,
+    filteredvar,
     default_mean,
     replace_kernel,
-    median_kernel,
-    updatefilt_kernel,
+    filtered_median,
+    updatefilt_core,
 )
 
 #############################
 #   imcombine
 #############################
+
+times = np.zeros(2,dtype=float)
 
 class SigClip:
     def __init__(self, combine='mean', center='mean', axis=0, default=0,
@@ -60,7 +62,7 @@ class SigClip:
             filt = cp.ones_like(data)
         else:
             mask = cp.array(mask,dtype=self.dtype)
-            filt = mask2filter(mask,mask)
+            filt = elementwise_not(mask,mask)
         
         checkfinite(data,filt,filt)
 
@@ -68,7 +70,7 @@ class SigClip:
             filt = self.updatefilt(data,filt,width)
 
         if self.rtnmask:
-            return mask2filter(filt,filt)
+            return elementwise_not(filt,filt)
 
         result = self.combine(data,filt,keepdims=keepdims)
 
@@ -79,19 +81,19 @@ class SigClip:
         sigma = self.sigma(data,mean,filt)
         cent  = self.center(mean,data,filt)
         
-        updatefilt_kernel(data,filt,cent,sigma,width,filt)
+        updatefilt_core(data,filt,cent,sigma,width,filt)
         
         return filt
     
     def sigma(self,data,mean,filt):
         fnum = filt.sum(axis=self.axis,keepdims=True)
-        fsqm = filterdvar(data,mean,filt,axis=self.axis,keepdims=True)
+        fsqm = filteredvar(data,mean,filt,axis=self.axis,keepdims=True)
         cp.divide(fsqm,fnum,out=fsqm)
         return cp.sqrt(fsqm,out=fsqm)
 
     def mean(self,data,filt,keepdims=False):
         fnum = filt.sum(axis=self.axis,keepdims=keepdims)
-        fsum = filterdsum(data,filt,axis=self.axis,keepdims=keepdims)
+        fsum = filteredsum(data,filt,axis=self.axis,keepdims=keepdims)
         return default_mean(fsum,fnum,self.default,fsum)
     
     def median(self,data,filt,keepdims=False):
@@ -104,23 +106,24 @@ class SigClip:
         tmpd = cp.where(filt,data,data.max(axis=0))
         tmpd.sort(axis=0)
 
-        result = median_kernel(tmpd,nums,self.default,nums)
+        result = filtered_median(tmpd,nums,self.default,nums)
         
         return result
 
-def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
+def imcombine(data,name=None,list=None,header=None,combine='mean',center='mean',
     iter=3,width=3.0,mask=None,dtype=None,memsave=False,**kwargs):
     '''
-    Combine images and write to FITS file
+    Combine images and optionally write to FITS file
 
     Parameters
     ----------
-    name : str
-        A path of output FITS file
-        Whether path like object is supported depends on
-        the version of Python and Astropy.
     data : 3D ndarray
         An array of images stacked along the 1st dimension (axis=0)
+    name : str, default None
+        A path of output FITS file
+        If given, write the result to a FITS file.
+        Whether path like object is supported depends on
+        the version of Python and Astropy.
     list : array-like, default None
         Names of image to combine
         These are written to the header.
@@ -167,27 +170,30 @@ def imcombine(name,data,list=None,header=None,combine='mean',center='mean',
             )
     else:
         combined = sigclip(data,iter,width,mask=mask)
-    
-    if header is None:
-        header = fits.Header()
 
-    if list is not None:
-        if len(list) != nums:
-            warnings.warn(
-                'Number of items is different between list and data'
-            )
-        if len(list) <= 999:
-            key = 'IMCMB{:03d}'
-        else:
-            key = 'IMCMB{:03X}'
-            msg = "IMCMB keys are written in hexadecimal."
-            header.append('COMMENT',msg)
-        for i,f in enumerate(list,1):
-            header[key.format(i)] = basename(f)
-    header['NCOMBINE'] = nums
-    
-    hdu = mkhdu(combined,header=header)
-    
-    hdu.writeto(name,**kwargs)
+    if name is not None:
+        if header is None:
+            header = fits.Header()
 
-    print('Combine: {0:d} frames, Output: {1}'.format(nums,name))
+        if list is not None:
+            if len(list) != nums:
+                warnings.warn(
+                    'Number of items is different between list and data'
+                )
+            if len(list) <= 999:
+                key = 'IMCMB{:03d}'
+            else:
+                key = 'IMCMB{:03X}'
+                msg = "IMCMB keys are written in hexadecimal."
+                header.append('COMMENT',msg)
+            for i,f in enumerate(list,1):
+                header[key.format(i)] = basename(f)
+        header['NCOMBINE'] = nums
+        
+        hdu = mkhdu(combined,header=header)
+        
+        hdu.writeto(name,**kwargs)
+
+        print('Combine: {0:d} frames, Output: {1}'.format(nums,name))
+
+    return combined

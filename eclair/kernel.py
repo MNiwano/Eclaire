@@ -15,7 +15,7 @@ reduction_kernel = ElementwiseKernel(
     name='reduction'
 )
 
-neighbor_kernel = ElementwiseKernel(
+neighbor_core = ElementwiseKernel(
     in_params='raw T input, T dx, T dy',
     out_params='T output',
     operation='''
@@ -30,7 +30,7 @@ neighbor_kernel = ElementwiseKernel(
     name='neighbor'
 )
 
-linear_kernel = ElementwiseKernel(
+linear_core = ElementwiseKernel(
     in_params='raw T x, T dx, T dy',
     out_params='T z',
     operation='''
@@ -41,7 +41,7 @@ linear_kernel = ElementwiseKernel(
     name='linear'
 )
 
-poly_kernel = ElementwiseKernel(
+poly_core = ElementwiseKernel(
     in_params='raw T input, raw T mat',
     out_params='T output',
     operation='''
@@ -62,7 +62,35 @@ poly_kernel = ElementwiseKernel(
     name='polynomial'
 )
 
-spline_kernel = ElementwiseKernel(
+solve_tridiag = ElementwiseKernel(
+    in_params='raw T vec1, raw T vec2',
+    out_params='raw T data',
+    operation='''
+        int h = data.shape()[0];
+        int idx[2] = {0, i};
+        int *j = &(idx[0]);
+
+        T tmp = (
+            data[idx] /= vec1[*j]
+        );
+
+        for ((*j)++; *j<h; (*j)++) {
+            data[idx] -= tmp;
+            tmp = (
+                data[idx] /= vec1[*j]
+            );
+        }
+
+        for ((*j)--; *j>=0; (*j)--) {
+            tmp = (
+                data[idx] -= tmp * vec2[*j]
+            );
+        }
+    ''',
+    name='solve_tridiag'
+)
+
+spline_core = ElementwiseKernel(
     in_params='raw T u, raw T y, T d',
     out_params='T z',
     operation='''
@@ -95,17 +123,17 @@ replace_kernel = ElementwiseKernel(
     name='replace'
 )
 
-filterdsum = ReductionKernel(
+filteredsum = ReductionKernel(
     in_params='T x, T f',
     out_params='T y',
     map_expr='(f ? x : f)',
     reduce_expr='a+b',
     post_map_expr='y=a',
     identity='0',
-    name='filterdsum'
+    name='filteredsum'
 )
 
-filterdvar = ReductionKernel(
+filteredvar = ReductionKernel(
     in_params='T x, T m, T f',
     out_params='T y',
     map_expr='square(x,m,f)',
@@ -120,7 +148,7 @@ filterdvar = ReductionKernel(
             return (f ? var : f);
         }
     ''',
-    name='filterdvar'
+    name='filteredvar'
 )
 
 default_mean = ElementwiseKernel(
@@ -134,7 +162,7 @@ default_mean = ElementwiseKernel(
     name='default_mean'
 )
 
-median_kernel = ElementwiseKernel(
+filtered_median = ElementwiseKernel(
     in_params='raw T input, T nums, T d',
     out_params='T output',
     operation='''
@@ -148,27 +176,27 @@ median_kernel = ElementwiseKernel(
         T s = (input[i_1] + input[i_2])/2;
         output = (f ? s : d);
     ''',
-    name='median'
+    name='filtered_median'
 )
 
-updatefilt_kernel = ElementwiseKernel(
+updatefilt_core = ElementwiseKernel(
     in_params='T d, T f, T c, T s, T w',
     out_params='T z',
     operation='''
         T dev = d-c, lim = w*s;
-        z = f * (dev*dev < lim*lim);
+        z = f * (dev*dev <= lim*lim);
     ''',
     name='updatefilt'
 )
 
-mask2filter = ElementwiseKernel(
+elementwise_not = ElementwiseKernel(
     in_params='T m',
     out_params='T f',
     operation='f = (m==0)',
-    name='mask2filter'
+    name='elementwise_not'
 )
 
-fix_kernel = ElementwiseKernel(
+fix_core = ElementwiseKernel(
     in_params='T x ,F f, T d, F n',
     out_params='T z',
     operation='''

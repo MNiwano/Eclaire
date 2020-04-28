@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import sys
-from os.path import isfile
+from os.path   import isfile
 
 if sys.version_info.major == 2:
     from future_builtins import zip, map
@@ -31,10 +31,12 @@ class FitsContainer:
         List of FITS file paths
     header : list
         List of FITS header
-        Before calling load method, it is a list of None.
+        Before calling load method, this is a list of None.
     data : 3D cupy.ndarray
         array of image data stacked along 1st axis
-        Before calling load method, it is a list of None.
+        Before calling load method, this is a list of None.
+    shape : tuple
+        Shape of image data
     slices : dict
         When executing the load method,
         read the area [ymin:ymax, xmin:xmax] of the FITS data array.
@@ -67,7 +69,7 @@ class FitsContainer:
         self.slices = dict(x_start=0,x_stop=None,y_start=0,y_stop=None)
         
         self.header = [None] * len(list)
-        self.data   = self.header[:]
+        self.data   = [None] * len(list)
 
     def __getitem__(self,idx):
         '''
@@ -193,6 +195,41 @@ class FitsContainer:
         )
         self.__stack(iterable,len(self.list),**kwargs)
 
+    def concatenate(self,*args):
+        '''
+        Add containsts of the other instances to self.
+
+        Parameters
+        ----------
+        *args : FitsContainer or its subclass
+            instances which merges with self
+        '''
+
+        for arg in args:
+            if not isinstance(arg,FitsContainer):
+                raise TypeError(
+                    'Only support FitsContainer or its subclasses'
+                )
+
+        try:
+            self.data = cp.concatenate(
+                [self.data] + [arg.data for arg in args],
+                axis=0
+            )
+        except ValueError:
+            raise ValueError('image shape mismatch')
+
+        self.list = sum(
+            (arg.list for arg in args),
+            start = self.list
+        )
+        self.header = sum(
+            (arg.header for arg in args),
+            start = self.header
+        )
+
+        return self
+
     def write(self,outlist,func=null,args=(),**kwargs):
         '''
         make FITS file with storing FITS header and data
@@ -262,7 +299,7 @@ class FitsContainer:
         ----------
         hduls : sequence of HDUList
         hdu_index : int, default 0
-            Index in HDUList of HDU
+            Index of HDU in HDUList
         dtype : str or dtype, default None
             dtype of cupy.ndarray
             See also __init__.
