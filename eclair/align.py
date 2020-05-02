@@ -9,7 +9,7 @@ if sys.version_info.major == 2:
 import numpy as np
 import cupy  as cp
 
-from common import null, judge_dtype
+from .common import null, judge_dtype
 
 from .kernel import (
     neighbor_core,
