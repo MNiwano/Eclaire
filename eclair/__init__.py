@@ -22,18 +22,18 @@ __all__ = [
 
 import cupy as cp
 
-import common
-from common import __version__
+from . import common
+from .common import __version__
 
-from kernel import reduction_kernel
+from .kernel import reduction_kernel
 
-from io import FitsContainer
+from .io import FitsContainer
 
-from align import imalign
+from .align import imalign
 
-from stats import imcombine
+from .stats import imcombine
 
-from fix import fixpix
+from .fix import fixpix
 
 def set_dtype(dtype):
     '''
