@@ -11,7 +11,7 @@ import cupy  as cp
 
 from common import null, judge_dtype
 
-from kernel import (
+from .kernel import (
     neighbor_core,
     linear_core,
     poly_core,
