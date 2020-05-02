@@ -11,9 +11,9 @@ from astropy.time import Time
 import numpy    as np
 import cupy     as cp
 
-from common import judge_dtype
-from io     import mkhdu
-from kernel import (
+from .common import judge_dtype
+from .io     import mkhdu
+from .kernel import (
     elementwise_not,
     checkfinite,
     filteredsum,
