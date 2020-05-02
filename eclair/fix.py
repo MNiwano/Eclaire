@@ -2,8 +2,8 @@
 
 import cupy     as cp
 
-from common import judge_dtype
-from kernel import (
+from .common import judge_dtype
+from .kernel import (
     elementwise_not,
     checkfinite,
     fix_core,
