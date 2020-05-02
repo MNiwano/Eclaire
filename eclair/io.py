@@ -14,7 +14,7 @@ from astropy.time import Time
 import cupy  as cp
 import numpy as np
 
-from common import __version__, __update__, null, judge_dtype
+from .common import __version__, __update__, null, judge_dtype
 
 origin = (
     'Eclair v{version} {date}'.format(version=__version__,date=__update__),
