@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import sys
+import sys, time
 from itertools  import product
 
 if sys.version_info.major == 2:
@@ -9,108 +9,88 @@ if sys.version_info.major == 2:
 import numpy as np
 import cupy  as cp
 
-from .common import null, judge_dtype
-
-from .kernel import (
-    neighbor_core,
-    linear_core,
-    poly_core,
-    solve_tridiag,
-    spline_core,
-)
-
+from .util import judge_dtype
+#
 #############################
 #   imalign
 #############################
 
-class Align:
-
-    interp_choices = ['spline3','poly3','linear','neighbor']
+class Shift:
     
-    def __init__(self,x_len,y_len,interp='spline3',dtype=None):
+    def __init__(self,x_len,y_len,interp='spline3',boundary='neighbor',
+        constant=0,dtype=None):
         self.x_len = x_len
         self.y_len = y_len
         self.dtype = judge_dtype(dtype)
+        self.const = constant
+
+        errmsg = '"{}" is not inpremented'
+
         if   interp == 'spline3':
-            self.vecx = mkvec(x_len,self.dtype)
-            self.vecy = mkvec(y_len,self.dtype)
-            self.shift = self.__spline
+            self.vec = (
+                mkvec(x_len,self.dtype),
+                mkvec(y_len,self.dtype)
+            )
+            self.__call__ = self.spline3
         elif interp == 'poly3':
-            self.__polyinit()
-            self.shift = self.__poly
+            mat = np.empty([16,16],dtype=self.dtype)
+            arange = np.arange(4)
+            v = (arange-1).reshape(-1,1) ** arange
+            np.stack(
+                [np.outer(vy,vx).ravel() for vy,vx in product(v,repeat=2)],
+                out=mat
+            )
+            self.mat = cp.array(np.linalg.inv(mat),dtype=self.dtype)
+            self.__call__ = self.poly3
         elif interp == 'linear':
-            self.shift = self.__linear
+            self.__call__ = self.linear
         elif interp == 'neighbor':
-            self.shift = self.__neighbor
+            self.__call__ = self.neighbor
         else:
-            raise ValueError('"{}" is not inpremented'.format(interp))
-        
-    def __call__(self,data,shifts,progress=null,args=()):
+            raise NotImplementedError(errmsg.format(interp))
 
-        data   = cp.asarray(data,dtype=self.dtype)
-        shifts = np.asarray(cp.asnumpy(shifts),dtype=self.dtype)
+        if   boundary=='neighbor':
+            self.bound = self.neighbor
+        elif boundary=='constant':
+            self.bound = self.constant
+        else:
+            raise NotImplementedError(errmsg.format(boundary))
 
-        nums, y_len, x_len = data.shape
-        if (y_len,x_len) != (self.y_len,self.x_len):
-            message = 'shape of images is differ from {}'
-            raise ValueError(message.format((self.y_len,self.x_len)))
-        elif nums != len(shifts):
-            raise ValueError('data and shifts do not match')
+    def constant(self,data,dx,dy):
+        return cp.full_like(data,self.const,dtype=self.dtype)
 
-        xy_i = np.floor(shifts).astype(int)
-        xy_d = shifts - xy_i
-
-        xy_i   -= xy_i.min(axis=0)
-        x_u,y_u = xy_i.max(axis=0)
-
-        aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=self.dtype)
-        for i,((ix,iy),dxy,frame) in enumerate(zip(xy_i,xy_d,data)):
-            shifted = self.shift(frame,*dxy)
-            aligned[i] = shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix]
-            progress(i,*args)
-
-        return aligned
-
-    def __neighbor(self,data,dx,dy):
+    def neighbor(self,data,dx,dy):
         shifted = cp.empty_like(data)
         neighbor_core(data,dx,dy,shifted)
         return shifted
 
-    def __linear(self,data,dx,dy):
-        shifted = self.__neighbor(data,dx,dy)
+    def linear(self,data,dx,dy):
+        shifted = self.bound(data,dx,dy)
         linear_core(data,dx,dy,shifted[1:,1:])
         return shifted
     
-    def __poly(self,data,dx,dy):
-        shifted = self.__linear(data,dx,dy)
+    def poly3(self,data,dx,dy):
+        shifted = self.linear(data,dx,dy)
 
-        ex = 1-dx
-        ey = 1-dy
-        shift_vector = cp.array(
-            [ex**j * ey**i for i,j in product(range(4),repeat=2)],
-            dtype=self.dtype
-        )
+        ex = (1 - dx) ** np.arange(4)
+        ey = (1 - dy) ** np.arange(4)
+        shift_vector = cp.asarray(np.outer(ey,ex).ravel(),dtype=self.dtype)
         shift_vector.dot(self.mat,out=shift_vector)
         shift_mat = shift_vector.reshape(4,4)
-
-        poly_core(data,shift_mat,shifted[2:-1,2:-1])
         
+        poly_core(data,shift_mat,shifted[2:-1,2:-1])
+
         return shifted
 
-    def __spline(self,data,dx,dy):
-        shifted = self.__neighbor(data,dx,dy)
+    def spline3(self,data,dx,dy):
+        vx, vy = self.vec
+        shifted = self.bound(data,dx,dy)
         tmpd = cp.empty([self.x_len-1,self.y_len],dtype=self.dtype)
-        spline1d(data.T,dx,self.vecx,tmpd)
-        spline1d(tmpd.T,dy,self.vecy,shifted[1:,1:])
+        spline1d(data.T,dx,vx,tmpd)
+        spline1d(tmpd.T,dy,vy,shifted[1:,1:])
         return shifted
 
-    def __polyinit(self):
-        mat = np.empty([16,16],dtype=self.dtype)
-        for y,x,k,l in product(range(4),repeat=4):
-            mat[y*4+x,k*4+l] = (x-1)**l * (y-1)**k
-        self.mat = cp.array(np.linalg.inv(mat),dtype=self.dtype)
-
-def imalign(data,shifts,interp='spline3',dtype=None):
+def imalign(data,shifts,interp='spline3',boundary='neighbor',dtype=None):
     '''
     Stack the images with aligning their relative positions,
     and cut out the overstretched area
@@ -132,25 +112,49 @@ def imalign(data,shifts,interp='spline3',dtype=None):
             neighbor - nearest neighbor
     dtype : str or dtype, default None
         dtype of array used internally
-        If None, this value will be usually "float32", 
-        but this can be changed with eclair.set_dtype.
-        If the dtype of input array is different, use a casted copy.
+        If None, use eclair.common.default_dtype.
+        If the input dtype is different, use a casted copy.
     
     Returns
     -------
     aligned : 3D cupy.ndarray
         An array of images aligned and stacked along the 1st axis
     '''
-    y_len, x_len = data.shape[-2:]
-    func = Align(x_len=x_len,y_len=y_len,interp=interp,dtype=dtype)
+    dtype = judge_dtype(dtype)
+    data = cp.asarray(data,dtype=dtype)
+    shifts = np.asarray(cp.asnumpy(shifts),dtype=dtype)
 
-    return func(data,shifts)
+    try:
+        nums, y_len, x_len = data.shape
+    except ValueError:
+        raise ValueError('data must have 3 dimensions')
+    
+    if nums != len(shifts):
+        raise ValueError('data and shifts do not match')
+
+    shift = Shift(
+        x_len=x_len, y_len=y_len, interp=interp,
+        boundary=boundary, dtype=dtype
+    )
+
+    xy_i = np.floor(shifts).astype(int)
+    xy_d = shifts - xy_i
+
+    xy_i   -= xy_i.min(axis=0)
+    x_u,y_u = xy_i.max(axis=0)
+
+    aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=dtype)
+    for (ix,iy),dxy,src,dst in zip(xy_i,xy_d,data,aligned):
+        shifted = shift(src,*dxy)
+        cp.copyto(dst,shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix])
+
+    return aligned
 
 def mkvec(n,dtype):
     asarray = lambda x:cp.asarray(x,dtype=dtype)
 
-    vec1 = cp.full(n-2,4,dtype=dtype)
-    vec2 = cp.ones(n-3,dtype=dtype)
+    vec1 = np.full(n-2,4,dtype=dtype)
+    vec2 = np.ones(n-3,dtype=dtype)
 
     for i in range(n-3):
         vec2[i] /= vec1[i]
@@ -161,6 +165,109 @@ def mkvec(n,dtype):
 def spline1d(data,d,vec,out):
     v1, v2 = vec
     u = cp.zeros_like(data)
-    u[1:-1] = (data[2:]-data[1:-1])-(data[1:-1]-data[:-2])
+    v_vector(data,u[1:-1])
     solve_tridiag(v1,v2,u[1:-1],size=u.shape[1])
     spline_core(u,data,1-d,out)
+
+neighbor_core = cp.ElementwiseKernel(
+    in_params='raw T input, T dx, T dy',
+    out_params='T output',
+    operation='''
+        int rows = input.shape()[0];
+        int cols = input.shape()[1];
+        int ix = i % cols - (dx>=0.5);
+        int iy = i / cols - (dy>=0.5);
+        int idx[] = {
+            max(0,min(rows-1,iy)),
+            max(0,min(cols-1,ix))
+        };
+        output = input[idx];
+    ''',
+    name='neighbor'
+)
+
+linear_core = cp.ElementwiseKernel(
+    in_params='raw T x, T dx, T dy',
+    out_params='T z',
+    operation='''
+        T ex = 1-dx, ey = 1-dy;
+        int i2 = i + x.shape()[1];
+        z = dy*(dx*x[i] + ex*x[i+1]) + ey*(dx*x[i2] + ex*x[i2+1]);
+    ''',
+    name='linear'
+)
+
+poly_core = cp.ElementwiseKernel(
+    in_params='raw T input, raw T mat',
+    out_params='T output',
+    operation='''
+        int width = input.shape()[1] - 3;
+        int i_x = i % width, i_y = i / width;
+        int idx1[2], idx2[2];
+        int *y1 = &(idx1[0]), *x1 = &(idx1[1]);
+        int *y2 = &(idx2[0]), *x2 = &(idx2[1]);
+        output = 0;
+        for (*y1=0, *y2=i_y; *y1<4; (*y1)++, (*y2)++) {
+            T tmp = 0;
+            for (*x1=0, *x2=i_x; *x1<4; (*x1)++, (*x2)++) {
+                tmp += mat[idx1] * input[idx2];
+            }
+            output += tmp;
+        }
+    ''',
+    name='polynomial'
+)
+
+v_vector = cp.ElementwiseKernel(
+    in_params='raw T input',
+    out_params='T output',
+    operation='''
+        int cols = input.shape()[1];
+        T d0 = input[i];
+        T d1 = input[i+cols];
+        T d2 = input[i+2*cols];
+        output = (d2-d1) - (d1-d0);
+    ''',
+    name='v_vector'
+)
+
+solve_tridiag = cp.ElementwiseKernel(
+    in_params='raw T vec1, raw T vec2',
+    out_params='raw T data',
+    operation='''
+        int h = data.shape()[0];
+        int idx[2] = {0, i};
+        int *j = &(idx[0]);
+
+        T tmp = (data[idx] /= vec1[*j]);
+
+        for ((*j)++; *j<h; (*j)++) {
+            data[idx] -= tmp;
+            tmp = (
+                data[idx] /= vec1[*j]
+            );
+        }
+
+        for ((*j)--; *j>=0; (*j)--) {
+            tmp = (
+                data[idx] -= tmp * vec2[*j]
+            );
+        }
+    ''',
+    name='solve_tridiag'
+)
+
+spline_core = cp.ElementwiseKernel(
+    in_params='raw T u, raw T y, T d',
+    out_params='T z',
+    operation='''
+        int i2 = i + u.shape()[1];
+        T u1 = u[i], u2 = u[i2];
+        T y1 = y[i], y2 = y[i2];
+        T a3 = u2 - u1;
+        T a2 = 3 * u1;
+        T a1 = (y2-y1) - (2*u1+u2);
+        z = y1 + d*(a1 + d*(a2 + d*a3))
+    ''',
+    name='spline'
+)
