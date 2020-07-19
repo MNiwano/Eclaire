@@ -20,72 +20,14 @@ __all__ = [
     'imalign', 'imcombine', 'fixpix'
 ]
 
-import cupy as cp
-
-from . import common
 from .common import __version__
 
-from .kernel import reduction_kernel
+from .util import set_dtype, reduction
 
 from .io import FitsContainer
 
 from .align import imalign
 
-from .stats import imcombine
+from .stats import sigma_clipped_stats, imcombine
 
 from .fix import fixpix
-
-def set_dtype(dtype):
-    '''
-    Change the default dtype used in all functions
-    and classes in this package.
-
-    Parameters
-    ----------
-    dtype : str or dtype
-    '''
-    common.dtype = cp.dtype(dtype)
-
-def reduction(image,bias,dark,flat,out=None,dtype=None):
-    '''
-    This function is equal to the equation:
-    out = (image - bias - dark) / flat, but needs less memory.
-    Therefore, each inputs must be broadcastable shape.
-
-    Parameters
-    ----------
-    image : ndarray
-    bias : ndarray
-    dark : ndarray
-    flat : ndarray
-    out : cupy.ndarray, default None
-        Alternate output array in which to place the result. The default
-        is ``None``; if provided, it must have the same shape as the
-        expected output, but the type will be cast if necessary.
-    dtype : str or dtype, default 'float32'
-        dtype of array used internally
-        If None, this value will be usually "float32", 
-        but this can be changed with eclair.set_dtype.
-        If the input dtype is different, use a casted copy.
-    
-    Returns
-    -------
-    out : cupy.ndarray
-    '''
-    dtype = common.judge_dtype(dtype)
-    asarray = lambda x : cp.asarray(x,dtype=dtype)
-
-    image = asarray(image)
-    bias  = asarray(bias)
-    dark  = asarray(dark)
-    flat  = asarray(flat)
-
-    if out is None:
-        out = cp.empty(
-            cp.broadcast(image,bias,dark,flat).shape,
-            dtype=dtype
-        )
-    
-    reduction_kernel(image,bias,dark,flat,out)
-
-    return out
