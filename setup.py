@@ -30,7 +30,7 @@ def getoutput(cmd):
 def get_cuda_version():
     try:
         output = getoutput(shlex.split('nvcc -V'))
-    except subprocess.CalledProcessError:
+    except Exception:
         return None
 
     match = re.search(r'release\s([\d\.]+)',output)
