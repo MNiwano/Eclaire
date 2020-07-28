@@ -149,16 +149,12 @@ def imalign(data,shifts,interp='spline3',boundary='neighbor',
 
     if trimimages:
         shape[1:] -= xy_u[::-1]
-        copy_ = (
-            lambda dst,src,(ix,iy) :
+        def copy_(dst,src,(ix,iy)):
             cp.copyto(dst,src[y_u-iy:y_len-iy, x_u-ix:x_len-ix])
-        )
     else:
         shape[1:] += xy_u[::-1]
-        copy_ = (
-            lambda dst,src,(ix,iy) :
+        def copy_(dst,src,(ix,iy)):
             cp.copyto(dst[iy:iy+y_len,ix:ix+x_len],src)
-        )
 
     aligned = cp.full(shape,cp.nan,dtype=dtype)
     for ixy,dxy,src,dst in zip(xy_i,xy_d,data,aligned):
