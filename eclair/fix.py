@@ -88,7 +88,7 @@ def fixpix(data,mask,out=None,dtype=None,fix_NaN=False):
     return out
 
 fix_core = cp.ElementwiseKernel(
-    in_params='F f, T d, F n, int8 fn',
+    in_params='F f, T d, F n, bool fn',
     out_params='T z',
     operation='''
         int flag = (!fn | isfinite(z)) & (f!=0);

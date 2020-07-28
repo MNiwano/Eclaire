@@ -24,8 +24,8 @@ from .util   import (
 #############################
 
 class SigClip:
-    def __init__(self, reduce='mean', center='mean', axis=None, default=0,
-        dtype=None, returnmask=False):
+    def __init__(self, reduce='mean', center='mean', axis=None,
+        default=cp.nan, dtype=None, returnmask=False):
 
         if isinstance(axis,int) or axis is None:
             self.axis = axis
@@ -144,7 +144,8 @@ class SigClip:
         indice = lambda i:tuple(
             i if j==axis else slice(None) for j in range(tmpd.ndim)
         )
-        d0, d1 = (tmpd[indice(f)] for f in fth)
+        d0, d1 = (
+            tmpd[indice(f)] for f in fth)
         result = median_core(nums,d0,d1,self.default)
 
         return result
@@ -156,7 +157,7 @@ class SigClip:
             reshape = lambda array: array
         elif self.axis is None:
             axis = 0
-            reshape = lambda array: array.reshape(-1)
+            reshape = cp.ravel
         else:
             move_axes = sorted(ax%ndim for ax in self.axis)
             axis = move_axes[0]

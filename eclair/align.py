@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import sys, time
+import sys
 from itertools  import product
 
 if sys.version_info.major == 2:
@@ -61,12 +61,12 @@ class Shift:
 
     def neighbor(self,data,dx,dy):
         shifted = cp.empty_like(data)
-        neighbor_core(data,dx,dy,shifted)
+        nearest_neighbor(data,dx,dy,shifted)
         return shifted
 
     def linear(self,data,dx,dy):
         shifted = self.bound(data,dx,dy)
-        linear_core(data,dx,dy,shifted[1:,1:])
+        bilinear(data,dx,dy,shifted[1:,1:])
         return shifted
     
     def poly3(self,data,dx,dy):
@@ -78,7 +78,7 @@ class Shift:
         shift_vector.dot(self.mat,out=shift_vector)
         shift_mat = shift_vector.reshape(4,4)
         
-        poly_core(data,shift_mat,shifted[2:-1,2:-1])
+        polynomial(data,shift_mat,shifted[2:-1,2:-1])
 
         return shifted
 
@@ -90,10 +90,11 @@ class Shift:
         spline1d(tmpd.T,dy,vy,shifted[1:,1:])
         return shifted
 
-def imalign(data,shifts,interp='spline3',boundary='neighbor',dtype=None):
+def imalign(data,shifts,interp='spline3',boundary='neighbor',
+            trimimages=True,dtype=None):
     '''
-    Stack the images with aligning their relative positions,
-    and cut out the overstretched area
+    Stack the images with aligning their relative positions
+
     Parameters
     ----------
     data : 3D ndarray
@@ -110,6 +111,9 @@ def imalign(data,shifts,interp='spline3',boundary='neighbor',dtype=None):
             poly3    - 3rd order interior polynomial
             linear   - bilinear
             neighbor - nearest neighbor
+    trimimages : bool, default True
+        If True, the output images will be trimmed to include only the region
+        over which they all overlap.
     dtype : str or dtype, default None
         dtype of array used internally
         If None, use eclair.common.default_dtype.
@@ -125,7 +129,7 @@ def imalign(data,shifts,interp='spline3',boundary='neighbor',dtype=None):
     shifts = np.asarray(cp.asnumpy(shifts),dtype=dtype)
 
     try:
-        nums, y_len, x_len = data.shape
+        nums, y_len, x_len = shape = np.array(data.shape)
     except ValueError:
         raise ValueError('data must have 3 dimensions')
     
@@ -141,12 +145,24 @@ def imalign(data,shifts,interp='spline3',boundary='neighbor',dtype=None):
     xy_d = shifts - xy_i
 
     xy_i   -= xy_i.min(axis=0)
-    x_u,y_u = xy_i.max(axis=0)
+    x_u,y_u = xy_u = xy_i.max(axis=0)
 
-    aligned = cp.empty([nums,y_len-y_u,x_len-x_u],dtype=dtype)
-    for (ix,iy),dxy,src,dst in zip(xy_i,xy_d,data,aligned):
-        shifted = shift(src,*dxy)
-        cp.copyto(dst,shifted[y_u-iy:y_len-iy, x_u-ix:x_len-ix])
+    if trimimages:
+        shape[1:] -= xy_u[::-1]
+        copy_ = (
+            lambda dst,src,(ix,iy) :
+            cp.copyto(dst,src[y_u-iy:y_len-iy, x_u-ix:x_len-ix])
+        )
+    else:
+        shape[1:] += xy_u[::-1]
+        copy_ = (
+            lambda dst,src,(ix,iy) :
+            cp.copyto(dst[iy:iy+y_len,ix:ix+x_len],src)
+        )
+
+    aligned = cp.full(shape,cp.nan,dtype=dtype)
+    for ixy,dxy,src,dst in zip(xy_i,xy_d,data,aligned):
+        copy_(dst,shift(src,*dxy),ixy)
 
     return aligned
 
@@ -169,7 +185,7 @@ def spline1d(data,d,vec,out):
     solve_tridiag(v1,v2,u[1:-1],size=u.shape[1])
     spline_core(u,data,1-d,out)
 
-neighbor_core = cp.ElementwiseKernel(
+nearest_neighbor = cp.ElementwiseKernel(
     in_params='raw T input, T dx, T dy',
     out_params='T output',
     operation='''
@@ -183,10 +199,10 @@ neighbor_core = cp.ElementwiseKernel(
         };
         output = input[idx];
     ''',
-    name='neighbor'
+    name='nearest_neighbor'
 )
 
-linear_core = cp.ElementwiseKernel(
+bilinear = cp.ElementwiseKernel(
     in_params='raw T x, T dx, T dy',
     out_params='T z',
     operation='''
@@ -194,10 +210,10 @@ linear_core = cp.ElementwiseKernel(
         int i2 = i + x.shape()[1];
         z = dy*(dx*x[i] + ex*x[i+1]) + ey*(dx*x[i2] + ex*x[i2+1]);
     ''',
-    name='linear'
+    name='bilinear'
 )
 
-poly_core = cp.ElementwiseKernel(
+polynomial = cp.ElementwiseKernel(
     in_params='raw T input, raw T mat',
     out_params='T output',
     operation='''
@@ -241,6 +257,7 @@ solve_tridiag = cp.ElementwiseKernel(
 
         T tmp = (data[idx] /= vec1[*j]);
 
+        // Forward elimination
         for ((*j)++; *j<h; (*j)++) {
             data[idx] -= tmp;
             tmp = (
@@ -248,6 +265,7 @@ solve_tridiag = cp.ElementwiseKernel(
             );
         }
 
+        // Backward Substitution
         for ((*j)--; *j>=0; (*j)--) {
             tmp = (
                 data[idx] -= tmp * vec2[*j]
