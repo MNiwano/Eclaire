@@ -57,10 +57,6 @@ def get_correspond_cupy():
 
 if __name__ == '__main__':
 
-    cuda_version = get_cuda_version()
-    if cuda_version is None:
-        requires.append('cupy')
-
     with open('eclair/common.py') as f:
         exec(f.read())
         assert __version__
