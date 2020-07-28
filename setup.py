@@ -4,18 +4,20 @@
 from setuptools import setup
 from setuptools import find_packages
 
-from eclair import common
-
 desc='''
 This package provides some useful classes and functions
 in astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 '''
 
+with open('eclair/common.py') as f:
+    exec(f.read())
+    assert __version__
+
 setup(
     name='eclair',
     packages=['eclair'],
-    version=common.__version__,
+    version=__version__,
     description='Eclair: CUDA-based Library for Astronomical Image Reduction',
     long_description=desc,
 
