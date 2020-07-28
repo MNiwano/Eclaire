@@ -65,6 +65,8 @@ if __name__ == '__main__':
         exec(f.read())
         assert __version__
 
+    cupyname = get_correspond_cupy()
+
     setup(
         name='eclair',
         packages=['eclair'],
@@ -76,7 +78,7 @@ if __name__ == '__main__':
         author_email='niwano@hp.phys.titech.ac.jp',
         url='https://github.com/MNiwano/Eclair',
 
-        install_requires=[get_correspond_cupy(),'astropy','numpy'],
+        install_requires=[cupyname,'astropy','numpy'],
         keywords = ['astronomy', 'science', 'fits', 'GPU', 'CUDA'],
         classifiers=[
             'Development Status :: 4 - Beta',
