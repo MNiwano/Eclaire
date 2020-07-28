@@ -29,7 +29,7 @@ def getoutput(cmd):
 
 def get_cuda_version():
     try:
-        outout = getoutput(shlex.split('nvcc -V'))
+        output = getoutput(shlex.split('nvcc -V'))
     except subprocess.CalledProcessError:
         return None
 
@@ -46,14 +46,14 @@ def get_correspond_cupy():
     if cuda_version is not None:
         try:
             current = pkg_resources.get_distribution(
-                'cupy-cuda{}'.format(cuda_version.replace('.'.''))
+                'cupy-cuda{}'.format(cuda_version.replace('.',''))
             )
         except Exception:
             pass
         else:
             pkg_name = current.project_name
     
-    return cupy_name
+    return pkg_name
 
 if __name__ == '__main__':
 
