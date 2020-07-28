@@ -26,10 +26,6 @@ pip install git+https://github.com/MNiwano/Eclair
 ## Components
 * **eclair**  
     source files of the package
-* **readme.pdf**  
-    a manual of reduction.ipynb and fitsget.ipynb
-* **reduction.ipynb**  
+* **sample.ipynb**  
     a sample program running on Google Colaboratory for trying Eclair
-* **fitsget.ipynb**  
-    a program to get FITS files as test data for running reduction.ipynb
     
