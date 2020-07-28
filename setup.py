@@ -1,46 +1,91 @@
 #! /usr/bin/env python
 #-*- encoding:utf-8 -*-
 
+import sys
+import re
+import shlex
+import subprocess
+import pkg_resources
+
 from setuptools import setup
 from setuptools import find_packages
 
-desc='''
+desc  = 'Eclair: CUDA-based Library for Astronomical Image Reduction'
+ldesc = '''
 This package provides some useful classes and functions
 in astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 '''
 
-requires=['numpy','astropy']
-try:
-    import cupy
-except:
-    requires.append('cupy')
+def getoutput(cmd):
+    if sys.version_info.major == 2:
+        output = subprocess.check_output(cmd)
+    else:
+        cp = subprocess.run(cmd)
+        cp.check_returncode()
+        output = cp.stdout
 
-with open('eclair/common.py') as f:
-    exec(f.read())
-    assert __version__
+    return output
 
-setup(
-    name='eclair',
-    packages=['eclair'],
-    version=__version__,
-    description='Eclair: CUDA-based Library for Astronomical Image Reduction',
-    long_description=desc,
+def get_cuda_version():
+    try:
+        outout = getoutput(shlex.split('nvcc -V'))
+    except subprocess.CalledProcessError:
+        return None
 
-    author='Masafumi Niwano',
-    author_email='niwano@hp.phys.titech.ac.jp',
-    url='https://github.com/MNiwano/Eclair',
+    match = re.search(r'release\s([\d\.]+)',output)
+    if match is not None:
+        result, = match.groups()
+        return result
+    else:
+        return None
 
-    install_requires=requires,
-    keywords = ['astronomy', 'science', 'fits', 'GPU', 'CUDA'],
-    classifiers=[
-        'Development Status :: 4 - Beta',
-        'Environment :: GPU'
-        'Environment :: GPU :: NVIDIA CUDA',
-        'Intended Audience :: Developers',
-        'Intended Audience :: Science/Research',
-        'Programming Language :: Python',
-        'Topic :: Software Development',
-        'Topic :: Scientific/Engineering'
-    ]
-)
+def get_correspond_cupy():
+    cuda_version = get_cuda_version()
+    pkg_name = 'cupy'
+    if cuda_version is not None:
+        try:
+            current = pkg_resources.get_distribution(
+                'cupy-cuda{}'.format(cuda_version.replace('.'.''))
+            )
+        except Exception:
+            pass
+        else:
+            pkg_name = current.project_name
+    
+    return cupy_name
+
+if __name__ == '__main__':
+
+    cuda_version = get_cuda_version()
+    if cuda_version is None:
+        requires.append('cupy')
+
+    with open('eclair/common.py') as f:
+        exec(f.read())
+        assert __version__
+
+    setup(
+        name='eclair',
+        packages=['eclair'],
+        version=__version__,
+        description=desc,
+        long_description=ldesc,
+
+        author='Masafumi Niwano',
+        author_email='niwano@hp.phys.titech.ac.jp',
+        url='https://github.com/MNiwano/Eclair',
+
+        install_requires=requires=[get_correspond_cupy(),'astropy','numpy'],
+        keywords = ['astronomy', 'science', 'fits', 'GPU', 'CUDA'],
+        classifiers=[
+            'Development Status :: 4 - Beta',
+            'Environment :: GPU'
+            'Environment :: GPU :: NVIDIA CUDA',
+            'Intended Audience :: Developers',
+            'Intended Audience :: Science/Research',
+            'Programming Language :: Python',
+            'Topic :: Software Development',
+            'Topic :: Scientific/Engineering'
+        ]
+    )
