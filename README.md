@@ -17,6 +17,11 @@ If you want to try it, read readme.pdf.
   * NumPy
   * Astropy
   * CuPy
+  
+## Install
+```
+pip install git+https://github.com/MNiwano/Eclair
+```
 
 ## Components
 * **eclair**  
