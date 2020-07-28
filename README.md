@@ -8,8 +8,6 @@ This package provides some useful classes and functions
 for astronomical image reduction, 
 and their processing speed is acceralated by using GPU via CUDA.
 
-If you want to try it, read readme.pdf.
-
 ## Requirements
 * NVIDIA GPU
 * CUDA
