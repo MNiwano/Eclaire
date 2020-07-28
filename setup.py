@@ -76,7 +76,7 @@ if __name__ == '__main__':
         author_email='niwano@hp.phys.titech.ac.jp',
         url='https://github.com/MNiwano/Eclair',
 
-        install_requires=requires=[get_correspond_cupy(),'astropy','numpy'],
+        install_requires=[get_correspond_cupy(),'astropy','numpy'],
         keywords = ['astronomy', 'science', 'fits', 'GPU', 'CUDA'],
         classifiers=[
             'Development Status :: 4 - Beta',
