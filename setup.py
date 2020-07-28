@@ -10,6 +10,12 @@ in astronomical image reduction,
 and their processing speed is acceralated by using GPU via CUDA.
 '''
 
+requires=['numpy','astropy']
+try:
+    import cupy
+except:
+    requires.append('cupy')
+
 with open('eclair/common.py') as f:
     exec(f.read())
     assert __version__
@@ -25,7 +31,7 @@ setup(
     author_email='niwano@hp.phys.titech.ac.jp',
     url='https://github.com/MNiwano/Eclair',
 
-    install_requires=['numpy','cupy','astropy'],
+    install_requires=requires,
     keywords = ['astronomy', 'science', 'fits', 'GPU', 'CUDA'],
     classifiers=[
         'Development Status :: 4 - Beta',
