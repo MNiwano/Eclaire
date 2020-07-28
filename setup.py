@@ -23,7 +23,7 @@ def getoutput(cmd):
     else:
         cp = subprocess.run(cmd,stdout=subprocess.PIPE)
         cp.check_returncode()
-        output = cp.stdout
+        output = cp.stdout.decode()
 
     return output
 
