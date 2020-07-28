@@ -31,7 +31,7 @@ class Shift:
                 mkvec(x_len,self.dtype),
                 mkvec(y_len,self.dtype)
             )
-            self.__call__ = self.spline3
+            self.shift = self.spline3
         elif interp == 'poly3':
             mat = np.empty([16,16],dtype=self.dtype)
             arange = np.arange(4)
@@ -41,11 +41,11 @@ class Shift:
                 out=mat
             )
             self.mat = cp.array(np.linalg.inv(mat),dtype=self.dtype)
-            self.__call__ = self.poly3
+            self.shift = self.poly3
         elif interp == 'linear':
-            self.__call__ = self.linear
+            self.shift = self.linear
         elif interp == 'neighbor':
-            self.__call__ = self.neighbor
+            self.shift = self.neighbor
         else:
             raise NotImplementedError(errmsg.format(interp))
 
@@ -55,6 +55,9 @@ class Shift:
             self.bound = self.constant
         else:
             raise NotImplementedError(errmsg.format(boundary))
+
+    def __call__(self,data,dx,dy):
+        return self.shift(data,dx,dy)
 
     def constant(self,data,dx,dy):
         return cp.full_like(data,self.const,dtype=self.dtype)
