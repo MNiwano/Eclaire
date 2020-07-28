@@ -21,7 +21,7 @@ def getoutput(cmd):
     if sys.version_info.major == 2:
         output = subprocess.check_output(cmd)
     else:
-        cp = subprocess.run(cmd)
+        cp = subprocess.run(cmd,stdout=subprocess.PIPE)
         cp.check_returncode()
         output = cp.stdout
 
