@@ -196,7 +196,7 @@ class FitsContainer(object):
             after some processing.
         wrapper : callable, default None
             A wrapper of iterator
-            If not None, use iterwrap(iter) as iterator.
+            If not None, use wrapper(iter) as iterator.
             It must be a callable object that takes iter as an argument
             and returns an iterable which returns values in the same format
             as iter.
@@ -218,7 +218,9 @@ class FitsContainer(object):
         if wrapper is None:
             wrapper = null1
 
-        iterator = wrapper(mapping(*args) for args in iter)
+        iterator = builtins.iter(
+            wrapper(mapping(*args) for args in iter)
+        )
 
         try:
             header, data = next(iterator)
