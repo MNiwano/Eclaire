@@ -10,7 +10,7 @@ import pkg_resources
 from setuptools import setup
 from setuptools import find_packages
 
-desc  = 'Eclair: CUDA-based Library for Astronomical Image Reduction'
+desc  = 'Eclaire: CUDA-based Library for Astronomical Image REduction'
 ldesc = '''
 This package provides some useful classes and functions
 in astronomical image reduction, 
@@ -57,22 +57,22 @@ def get_correspond_cupy():
 
 if __name__ == '__main__':
 
-    with open('eclair/common.py') as f:
+    with open('eclaire/common.py') as f:
         exec(f.read())
         assert __version__
 
     cupyname = get_correspond_cupy()
 
     setup(
-        name='eclair',
-        packages=['eclair'],
+        name='eclaire',
+        packages=['eclaire'],
         version=__version__,
         description=desc,
         long_description=ldesc,
 
         author='Masafumi Niwano',
         author_email='niwano@hp.phys.titech.ac.jp',
-        url='https://github.com/MNiwano/Eclair',
+        url='https://github.com/MNiwano/Eclaire',
 
         install_requires=[cupyname,'astropy','numpy'],
         keywords = ['astronomy', 'science', 'fits', 'GPU', 'CUDA'],
