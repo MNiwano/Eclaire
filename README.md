@@ -1,7 +1,7 @@
-Eclair
-======
+Eclaire
+=======
 
-Eclair : CUDA-based Library for Astronomical Image Reduction
+Eclaire : CUDA-based Library for Astronomical Image REduction
 
 ## Description
 This package provides some useful classes and functions
@@ -18,12 +18,12 @@ and their processing speed is acceralated by using GPU via CUDA.
   
 ## Install
 ```
-pip install git+https://github.com/MNiwano/Eclair
+pip install git+https://github.com/MNiwano/Eclaire
 ```
 
 ## Components
-* **eclair**  
+* **eclaire**  
     source files of the package
 * **sample.ipynb**  
-    a sample program running on Google Colaboratory for trying Eclair
+    a sample program running on Google Colaboratory for trying Eclaire
     
