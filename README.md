@@ -27,3 +27,6 @@ pip install git+https://github.com/MNiwano/Eclaire
 * **sample.ipynb**  
     a sample program running on Google Colaboratory for trying Eclaire
     
+## Reference
+arXiv: http://arxiv.org/abs/2008.11486
+    
