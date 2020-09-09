@@ -1,6 +1,8 @@
 Eclaire
 =======
 
+<a href="http://ascl.net/2008.020"><img src="https://img.shields.io/badge/ascl-2008.020-blue.svg?colorB=262255" alt="ascl:2008.020" /></a>
+
 Eclaire : CUDA-based Library for Astronomical Image REduction
 
 ## Description
