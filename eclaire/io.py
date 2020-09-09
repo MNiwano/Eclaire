@@ -3,13 +3,15 @@
 import sys
 import copy
 import time
+import itertools
+import warnings
 
 if sys.version_info.major == 2:
     from future_builtins import zip, map
-    from collections     import Sized, Iterable
+    from collections     import Sized, Iterable, Iterator, Sequence
     import __builtin__ as builtins
 else:
-    from collections.abc import Sized, Iterable
+    from collections.abc import Sized, Iterable, Iterator, Sequence
     import builtins
 
 from astropy.io   import fits
@@ -31,37 +33,82 @@ null2 = lambda *args:args
 class FitsContainer(object):
     '''
     Class for storing multiple FITS data and performing SIMD processing.
-    
-    Notes
-    -----
-    The methods implemented by this class interpret the attributes
-    list, header, and data are sorted in the same order.
+
+    Attributes
+    ----------
+    list : list
+        List of FITS name
+    header : list
+        List of FITS header
+    data : 3D cupy.ndarray
+        Array in which image data is stacked
     '''
 
-    def __init__(self,list=[],header=[],data=[],dtype=None):
+    def __init__(self,object,dtype=None,**kwargs):
         '''
         Parameters
         ----------
-        list : array-like
-            List of FITS file names
-        header : array-like
-            List of FITS header
-        data : array-like
-            Array of image data stacked along 1st axis
-        dtype : str or dtype
+        object : object
+            Used for initializing attributes (list, header, and data).
+            How to retrieve a value from a given 'object' depends on its type.
+            The type is determined using the built-in function 'isinstance'.
+            The type judgment is performed in the following order.
+            * None          : return an empty instance
+            * ndarray       : call 'from_array'
+            * FitsContainer : copy attributes
+            * sequence of ...
+                * HDUList   : call 'from_hduls'
+                * HDU       : call 'from_hdus'
+                * other     : call 'from_files'
+            * iterator      : call 'from_iterator'
+        dtype : str or dtype, default None
             dtype of ndarray.
             If None, use eclair.common.default_dtype.
+        kwargs : keyword argments
+            Additional keyword arguments passed to the method
+            to initialize attributes.
+
+        See Also
+        --------
+        from_array : Set array to the attribute
+        from_files : Load headers and data from FITS files
+        from_hduls : Load headers and data from a sequence of HDUList
+        from_hdus : Load headers and data from a sequence of HDU
+        from_iterator : Load headers and data from iterator
         '''
         self.dtype = judge_dtype(dtype)
-        
-        self.list   = list
-        self.header = header
-        self.data   = data
+
+        attributes = ('list','header','data')
+
+        if object is None:
+            for attr_name in attributes:
+                setattr(self,[])
+        elif isinstance(object,(np.ndarray,cp.ndarray)):
+            self.from_array(object,**kwargs)
+        elif isinstance(object,FitsContainer):
+            for attr_name in attributes:
+                setattr(self,getattr(object,attr_name))
+        elif isinstance(object,Sequence):
+            try:
+                t = type(object[0])
+            except IndexError:
+                raise ValueError('given sequence is empty')
+            if issubclass(t,fits.HDUList):
+                method = self.from_hduls
+            elif issubclass(t,fits.hdu.image._ImageBaseHDU):
+                method = self.from_hdus
+            else:
+                method = self.from_files
+            method(object,**kwargs)
+        elif isinstance(object,Iterator):
+            self.from_iterator(object,**kwargs)
+        else:
+            raise TypeError('Unsupported type')
 
     @property
     def list(self):
         '''
-        List of FITS file names
+        List of FITS file name
         '''
         return self.__list
     
@@ -83,13 +130,15 @@ class FitsContainer(object):
     @property
     def data(self):
         '''
-        Array of image data stacked along 1st axis
+        Array in which image data is stacked
         '''
         return self.__data
 
     @data.setter
     def data(self,array):
-        self.__data = cp.asarray(array,dtype=self.dtype)
+        array = cp.array(array,ndmin=3,copy=False,dtype=self.dtype)
+        assert array.ndim == 3
+        self.__data = array
 
     def __getitem__(self,idx):
         '''
@@ -134,35 +183,43 @@ class FitsContainer(object):
         '''
         self.__len__() <==> len(self)
         '''
-        n_l = len(self.list)
-        n_h = len(self.header)
-        n_d = len(self.data)
-        if (n_l == n_h) and (n_l == n_d):
-            return n_l
-        else:
-            msg = 'the number of list or header or data does not match'
-            raise ValueError(msg)
+        n_l = len(self.__list)
+        n_h = len(self.__header)
+        n_d = len(self.__data)
+        if (n_d != n_l) or (n_d != n_h):
+            warnings.warn('length of list or header differs from length of data')
 
-    def clip(self,indices):
+        return n_d
+
+    def clip(self,indices,in_place=False):
         '''
-        clip out items in attributes list, header, data
-        that are not in given indices
+        Removes the items of list, header, and data
+        that do not have index in the given indices.
 
         Parameters
         ----------
         indices : array-like
             indices of items to leave
+        in_place : bool, default False
+            If True, perform in-place array manipulations for ndarray.
+            This saves memory, but the values of the original ndarray
+            are not preserved.
         '''
         indices = sorted(indices)
 
         list = self.list
         head = self.header
         data = self.data
+
         self.list   = (list[i] for i in indices)
         self.header = (head[i] for i in indices)
-        for i,j in enumerate(indices):
-            data[i] = data[j]
-        self.data = data[:len(indices)]
+
+        tmpd = data[:len(indices)]
+        if not in_place:
+            tmpd = cp.empty_like(tmpd)
+        for dst,j in zip(tmpd,indices):
+            cp.copyto(dst,data[j])
+        self.data = tmpd
 
     def extend(self,*args):
         '''
@@ -179,104 +236,117 @@ class FitsContainer(object):
         if not all(isinstance(arg,FitsContainer) for arg in args):
             raise TypeError('Only support FitsContainer or its subclasses')
 
-        self.list = sum(
-            (arg.list for arg in args),
-            self.list
+        self.list += list(
+            itertools.chain(
+                *(arg.list for arg in args)
+            )
         )
-        self.header = sum(
-            (arg.header for arg in args),
-            self.header
+        self.header += list(
+            itertools.chain(
+                *(arg.header for arg in args)
+            )
         )
 
+        data_to_add = [cp.asarray(arg.data,dtype=self.dtype) for arg in args]
         try:
-            self.data = cp.concatenate(
-                [self.data] + [arg.data for arg in args],
-                axis=0
-            )
+            self.data = cp.concatenate([self.data] + data_to_add, axis=0)
         except ValueError:
             raise ValueError('data shape mismatch')
 
         return self
 
-    def from_iterator(self,iter,length=None,mapping=None,wrapper=None):
+    def from_array(self,data,list=None,header=None):
+        '''
+        Set array to the attribute
+
+        Parameters
+        ----------
+        data : ndarray
+            Array in which image data are stacked.
+        list : array-like, default None
+            Sequence of FITS file name.
+            If None, use a list of None as many as the length of array.
+        header : array-like, default None
+            Sequence of FITS header.
+            If None, use a list of None as many as the length of array.
+        '''
+        data = cp.asarray(data,dtype=self.dtype)
+        length = len(data)
+
+        if list is None:
+            list = [None] * length
+        elif len(list) != length:
+            raise ValueError('length of list and shape of data do not match')
+        if header is None:
+            header = [None] * length
+        elif len(header) != length:
+            raise ValueError('length of header and shape of data do not match')
+        
+        self.list   = list
+        self.header = header
+        self.data   = data
+
+    def from_iterator(self,iterable,mapping=None,wrapper=None,mempool=None):
         '''
         Load headers and data from iterator
 
         Parameters
         ----------
-        iter : iterable
-            An iterator that returns header and data
+        iterable : iterable
+            An iterable object that returns header and data
             This must return a tuple (header, data).
             'header' and 'data' must be instances of astropy.io.fits.Header
-            and 2d-numpy.ndarray, respectively.
-        length : int, default None
-            A length of iter. If iter does not support a __len__ method,
-            this value must be specified.
+            and 2d ndarray, respectively.
         mapping : callable, default None
-            If not None, pass the return value of iter (header, data) to
-            this object and use its return as (header, data).
-            It must be a callable object which receives returns of iter
-            as arguments with unpacking, and returns the same format tuple
-            after some processing.
+            Apply this to each items that 'iterable' returns.
+            If None, use a function that returns arguments as is.
         wrapper : callable, default None
-            A wrapper of iterator
-            If not None, use iterwrap(iter) as iterator.
-            It must be a callable object that takes iter as an argument
-            and returns an iterable which returns values in the same format
-            as iter.
+            A wrapper function of iterator.
+            If None, use a function that returns arguments as is.
+        mempool : cupy.cuda.MemoryPool, default None
+            This is used for to release the extra memory allocated
+            in the process of transferring images to VRAM.
+            If you use the custom memory pool (e.g. unified memory pool),
+            giving the MemoryPool instance is recommended for
+            the efficient memory usage. If None, use the default
+            memory pool of CuPy.
 
         Notes
         -----
-        'length' is used in the initialization of a cupy.ndarray which stores
-        the data. The reason why the ndarray is not initialized after reading
-        all containts of iter is that it generates latency in host memory
-        allocation.
+        This method iterates the return values of the following expressions.
+        ```
+        wrapper(mapping(*args) for args in iterable)
+        ```
         '''
-        if length is None:
-            length = len(iter)
-        else:
-            length = int(length)
-
         if mapping is None:
             mapping = null2
         if wrapper is None:
             wrapper = null1
 
-        iterator = builtins.iter(
-            wrapper(mapping(*args) for args in iter)
-        )
+        if mempool is None:
+            mempool = cp.get_default_memory_pool()
+        elif not isinstance(mempool,cp.cuda.MemoryPool):
+            raise TypeError('mempool must be cupy.cuda.MemoryPool')
 
-        try:
-            header, data = next(iterator)
-        except StopIteration:
-            raise ValueError('iterator is empty')
-        else:
-            tmp_head = []
-            tmp_data = cp.empty([length] + list(data.shape),dtype=self.dtype)
-            happend = tmp_head.append
+        ini_total = mempool.total_bytes()
 
-            array_iter = builtins.iter(tmp_data)
-            target = next(array_iter)
+        tmp_head = []
+        tmp_data = []
+        happend = tmp_head.append
+        dappend = tmp_data.append
 
-            happend(header)
-            target.set(data)
+        for h, d in wrapper(mapping(*args) for args in iterable):
+            happend(h)
+            dappend(cp.asarray(d,dtype=self.dtype))
 
-            for (header, data), target in zip(iterator,array_iter):
-                happend(header)
-                target.set(data)
+        self.header = tmp_head
+        self.data   = cp.stack(tmp_data)
 
-            try:
-                next(iterator)
-            except StopIteration:
-                actual_length = len(tmp_head)
-                if actual_length < length:
-                    tmp_data = tmp_data[:actual_length]
-            else:
-                raise ValueError('length is shorter than iter')
+        del tmp_data[:]
 
-            self.header = tmp_head
-            self.data   = tmp_data
-
+        if ini_total < mempool.total_bytes():
+            mempool.free_all_blocks()
+    
     def from_files(self,files,hdu_index=0,**kwargs):
         '''
         Load headers and data from FITS files
@@ -284,7 +354,7 @@ class FitsContainer(object):
         Parameters
         ----------
         files : array-like
-            A sequence of FITS file path
+            A sequence of FITS file path or file-object.
             Whether path-like objects are supported depends on
             the version of Python and Astropy.
         hdu_index : int, default 0
@@ -303,7 +373,7 @@ class FitsContainer(object):
                 for x in self.list
         )
 
-        self.from_iterator(iterable,length=len(self.list),**kwargs)
+        self.from_iterator(iterable,**kwargs)
 
     def from_hduls(self,hduls,hdu_index=0,**kwargs):
         '''
@@ -332,9 +402,9 @@ class FitsContainer(object):
             hdu_splitter(x[hdu_index],dtype=self.dtype,xp=np) for x in hduls
         )
 
-        self.from_iterator(iterable,length=len(hduls),**kwargs)
+        self.from_iterator(iterable,**kwargs)
 
-    def from_hdus(self,hdus,**kwargs):
+    def from_hdus(self,hdus,list=None,**kwargs):
         '''
         Load headers and data from a sequence of HDU
 
@@ -351,14 +421,19 @@ class FitsContainer(object):
         '''
         hdus = builtins.list(hdus)
 
-        nums = len(hdus)    
-        self.list = [None] * nums
+        nums = len(hdus)
+        if list is None:
+            self.list = [None] * nums
+        elif len(list) == nums:
+            self.list = list
+        else:
+            raise ValueError('length of list and hdus do not match')
 
         iterable = (
             hdu_splitter(hdu,dtype=self.dtype,xp=np) for hdu in hdus
         )
 
-        self.from_iterator(iterable,length=nums,**kwargs)
+        self.from_iterator(iterable,**kwargs)
 
     def write(self,outlist,mapping=None,wrapper=None,**kwargs):
         '''
@@ -408,8 +483,13 @@ def hdu_splitter(hdu,dtype=None,xp=cp):
     header : astropy.io.fits.Header
     data : ndarray
     '''
-    header = hdu.header
-    data = xp.asarray(hdu.data,dtype=judge_dtype(dtype))
+    try:
+        header = hdu.header
+        data = hdu.data
+    except AttributeError:
+        raise TypeError('input must be the HDU object')
+    else:
+        data = xp.asarray(data,dtype=judge_dtype(dtype))
 
     return header, data
 

@@ -15,7 +15,7 @@ def set_dtype(dtype):
     dtype : str or dtype
     '''
 
-    common.default_dtype = judge_dtype(dtype)
+    common.default_dtype = judge_dtype(dtype).name
 
 def judge_dtype(dtype):
     if dtype is None:
@@ -24,7 +24,7 @@ def judge_dtype(dtype):
     dtype = cp.dtype(dtype)
 
     if dtype.kind == 'f':
-        return dtype.name
+        return dtype
     else:
         raise TypeError('dtype must be floating point')
 

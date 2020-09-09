@@ -163,7 +163,8 @@ def imalign(data,shifts,interp='spline3',boundary='neighbor',
 
     aligned = cp.full(shape,cp.nan,dtype=dtype)
     for ixy,dxy,src,dst in zip(xy_i,xy_d,data,aligned):
-        copy_(dst,shift(src,*dxy),*ixy)
+        shifted = shift(src,*dxy)
+        copy_(dst,shifted,*ixy)
 
     return aligned
 

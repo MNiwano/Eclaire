@@ -144,8 +144,7 @@ class SigClip:
         indice = lambda i:tuple(
             i if j==axis else slice(None) for j in range(tmpd.ndim)
         )
-        d0, d1 = (
-            tmpd[indice(f)] for f in fth)
+        d0, d1 = (tmpd[indice(f)] for f in fth)
         result = median_core(nums,d0,d1,self.default)
 
         return result
