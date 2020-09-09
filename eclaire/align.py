@@ -31,7 +31,7 @@ class Shift:
                 mkvec(x_len,self.dtype),
                 mkvec(y_len,self.dtype)
             )
-            self.__call__ = self.spline3
+            self.interp = self.spline3
         elif interp == 'poly3':
             mat = np.empty([16,16],dtype=self.dtype)
             arange = np.arange(4)
@@ -41,11 +41,11 @@ class Shift:
                 out=mat
             )
             self.mat = cp.array(np.linalg.inv(mat),dtype=self.dtype)
-            self.__call__ = self.poly3
+            self.interp = self.poly3
         elif interp == 'linear':
-            self.__call__ = self.linear
+            self.interp = self.linear
         elif interp == 'neighbor':
-            self.__call__ = self.neighbor
+            self.interp = self.neighbor
         else:
             raise NotImplementedError(errmsg.format(interp))
 
@@ -140,7 +140,7 @@ def imalign(data,shifts,interp='spline3',boundary='neighbor',
     shift = Shift(
         x_len=x_len, y_len=y_len, interp=interp,
         boundary=boundary, dtype=dtype
-    )
+    ).interp
 
     xy_i = np.floor(shifts).astype(int)
     xy_d = shifts - xy_i
