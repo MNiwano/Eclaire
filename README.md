@@ -26,8 +26,9 @@ pip install git+https://github.com/MNiwano/Eclaire
 ## Components
 * **eclaire**  
     source files of the package
+* **sample_en.ipynb**
 * **sample_ja.ipynb**  
-    a sample program running on Google Colaboratory for trying Eclaire (written in Japanese)
+    a sample program running on Google Colaboratory for trying Eclaire
     
 ## Reference
 DOI: https://doi.org/10.1093/pasj/psaa091
