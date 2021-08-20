@@ -16,7 +16,7 @@ from .util   import (
     judge_dtype,
     elementwise_not,
     checkfinite,
-    replace_kernel,
+    replace_kernel
 )
 
 #############################
@@ -250,7 +250,8 @@ def sigma_clipped_stats(data,axis=None,keepdims=False,mask=None,weights=None,
     return result
 
 def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
-    combine='mean',center='mean',iters=5,width=3.0,dtype=None,**kwargs):
+    combine='mean',center='mean',iters=5,width=3.0,dtype=None,exthdus=[],
+    **kwargs):
     '''
     Combine images and optionally write to FITS file
 
@@ -299,6 +300,9 @@ def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
     Returns
     -------
     combined : 2D cupy.ndarray
+        If rethdu is False
+    hdu : astropy.fits.PrimaryHDU
+        If rethdu is True
 
     See Also
     --------
@@ -327,20 +331,22 @@ def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
                 key = 'IMCMB{:03d}'
             else:
                 key = 'IMCMB{:03X}'
-                msg = "IMCMB keys are written in hexadecimal."
-                header.append('COMMENT',msg)
+                comment = 'IMCMB keys are written in hexadecimal.'
+                header.append('COMMENT',comment)
             for i,f in enumerate(list,1):
                 header[key.format(i)] = basename(f)
         header['NCOMBINE'] = ldata
-        
-        hdu = mkhdu(combined,header=header)
-        
-        hdu.writeto(name,**kwargs)
 
-        print(
-            'Combine: {0:d} frames, Output: {1}'.format(ldata,basename(name))
+        hdu = mkhdu(combined,header=header)
+
+        hdul = fits.HDUList(
+            [hdu] + exthdus
         )
-    
+        hdul.writeto(name,**kwargs)        
+        print(
+            'Combine: {:d} frames, Output: {}'.format(ldata,basename(name))
+        )
+
     return combined
 
 check_sum = cp.ReductionKernel(

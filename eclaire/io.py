@@ -191,7 +191,7 @@ class FitsContainer(object):
 
         return n_d
 
-    def clip(self,indices,in_place=False):
+    def clip(self,indices,in_place=False,remove=False):
         '''
         Removes the items of list, header, and data
         that do not have index in the given indices.
@@ -205,7 +205,12 @@ class FitsContainer(object):
             This saves memory, but the values of the original ndarray
             are not preserved.
         '''
-        indices = sorted(indices)
+        if remove:
+            indices = sorted(
+                set(range(len(self))) - set(indices)
+            )
+        else:
+            indices = sorted(indices)
 
         list = self.list
         head = self.header
@@ -324,7 +329,7 @@ class FitsContainer(object):
             wrapper = null1
 
         if mempool is None:
-            mempool = cp.get_default_memory_pool()
+            mempool = cp.cuda.get_allocator().__self__
         elif not isinstance(mempool,cp.cuda.MemoryPool):
             raise TypeError('mempool must be cupy.cuda.MemoryPool')
 
@@ -522,6 +527,8 @@ def mkhdu(data,header=None,hdu_class=fits.PrimaryHDU):
     hdu.header['ORIGIN'] = origin
     hdu.header['DATE']   = (now,'Date HDU was created')
     if header is not None:
+        for key in ('ORIGIN','DATE'):
+            header.remove(key,ignore_missing=True)
         hdu.header.extend(header)
         
     return hdu

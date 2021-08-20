@@ -267,7 +267,7 @@ solve_tridiag = cp.ElementwiseKernel(
             );
         }
 
-        // Backward Substitution
+        // Backward substitution
         for ((*j)--; *j>=0; (*j)--) {
             tmp = (
                 data[idx] -= tmp * vec2[*j]
