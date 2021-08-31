@@ -208,9 +208,15 @@ bilinear = cp.ElementwiseKernel(
     in_params='raw T x, T dx, T dy',
     out_params='T z',
     operation='''
+        int cols = x.shape()[1] - 1;
+        int ix = i % cols;
+        int iy = i / cols;
         T ex = 1-dx, ey = 1-dy;
-        int i2 = i + x.shape()[1];
-        z = dy*(dx*x[i] + ex*x[i+1]) + ey*(dx*x[i2] + ex*x[i2+1]);
+        int i0[] = {iy+0, ix+0};
+        int i1[] = {iy+0, ix+1};
+        int i2[] = {iy+1, ix+0};
+        int i3[] = {iy+1, ix+1};
+        z = dy*(dx*x[i0] + ex*x[i1]) + ey*(dx*x[i2] + ex*x[i3]);
     ''',
     name='bilinear'
 )
