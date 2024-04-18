@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import sys
+import io
 import copy
 import time
 import itertools
 import warnings
+from pathlib import Path
 
 if sys.version_info.major == 2:
     from future_builtins import zip, map
@@ -30,6 +32,96 @@ origin = (
 null1 = lambda x:x
 null2 = lambda *args:args
 
+def hdu_splitter(hdu,dtype=None,xp=cp):
+    '''
+    Split HDU object into header and data
+
+    Parameters
+    ----------
+    hdu : astropy HDU object
+    dtype : str or dtype, default None
+        dtype of array used internally
+        If None, use eclair.common.default_dtype.
+        If the input dtype is different, use a casted copy.
+    xp : module object of numpy or cupy, default cupy
+        Whether the return value is numpy.ndarray or cupy.ndarray
+    
+    Returns
+    -------
+    header : astropy.io.fits.Header
+    data : ndarray
+    '''
+    try:
+        header = hdu.header
+        data = hdu.data
+    except AttributeError as e:
+        raise TypeError('input must be the HDU object') from e
+    else:
+        data = xp.asarray(data,dtype=judge_dtype(dtype))
+
+    return header, data
+
+def mkhdu(data,header=None,hdu_class=fits.PrimaryHDU):
+    '''
+    Creates HDU from given data
+
+    Parameters
+    ----------
+    data : ndarray
+    header : astropy.io.fits.Header, default None
+        The header associated with data.
+        If None, a header of the appropriate type is created
+        for the supplied data.
+    hdu_class : class, default astropy.io.fits.PrimaryHDU
+        HDU class
+
+    Returns
+    -------
+    hdu : HDU object
+
+    Notes
+    -----
+    This function is intended for use inside eclaire.
+    It may be better to call astropy HDU class dilectly.
+    '''
+    hdu = hdu_class(data=cp.asnumpy(data))
+    now = Time.now().isot
+
+    hdu.header['ORIGIN'] = origin
+    hdu.header['DATE']   = (now,'Date HDU was created')
+    if header is not None:
+        for key in ('ORIGIN','DATE'):
+            header.remove(key,ignore_missing=True)
+        hdu.header.extend(header)
+        
+    return hdu
+
+def fitsloader(name,hdu_index=0,**kwargs):
+    '''
+    Read FITS file and get header and data.
+
+    Parameters
+    ----------
+    name : str
+        path of FITS file
+        Whether path-like objects are supported depends on
+        the version of Python and Astropy.
+    hdu_index : int, default 0
+        Index in HDUList of HDU
+    kwargs : keyward arguments
+        Additional keyword arguments to pass to the hdu_splitter function
+        See also hdu_splitter.
+
+    Returns
+    -------
+    header : astropy.io.fits.Header
+    data : ndarray
+    '''
+    with fits.open(name) as hdul:
+        result = hdu_splitter(hdul[hdu_index],**kwargs)
+        
+    return result
+
 class FitsContainer(object):
     '''
     Class for storing multiple FITS data and performing SIMD processing.
@@ -42,31 +134,45 @@ class FitsContainer(object):
         List of FITS header
     data : 3D cupy.ndarray
         Array in which image data is stacked
+
+    Notes
+    -----
+    Since the above attributes are implemented as properties,
+    they do not support the inplace operator (e.g. +=).
+    If you want to perform such operations, assign the attribute to a variable,
+    and perform the operation on the variable.
     '''
 
-    def __init__(self,object,dtype=None,**kwargs):
+    def __init__(self,object,dtype=None,method='files',**kwargs):
         '''
         Parameters
         ----------
-        object : object
-            Used for initializing attributes (list, header, and data).
-            How to retrieve a value from a given 'object' depends on its type.
-            The type is determined using the built-in function 'isinstance'.
-            The type judgment is performed in the following order.
-            * None          : return an empty instance
-            * ndarray       : call 'from_array'
-            * FitsContainer : copy attributes
-            * sequence of ...
-                * HDUList   : call 'from_hduls'
-                * HDU       : call 'from_hdus'
-                * other     : call 'from_files'
-            * iterator      : call 'from_iterator'
+        object : type required by the method
+            An object which has image data in some way.
+            If this is an instance of FitsContainer or its subclass,
+            the resulting instance will be a copy of this.
+            Otherwise, this will be given as an argument to the method
+            specified by the keyword argument "method",
+            and used to initialize the attributes "list", "header" and "data".
+        method : str, default 'files'
+            This specifies how to initialize the instance.
+            * 'empty' - return an empty instance. "object" is ignored.
+            * 'array' - use self.from_array. "object" is interpteted
+                as an array in which images are stacked.
+            * 'files' - use self.from_files. "object" is interpreted 
+                as a sequence of FITS file paths.
+            * 'hduls' - use self.from_hduls. "object" is interpreted
+                as a sequence of astropy.io.fits.HDUList.
+            * 'hdus' - use self.from_hdus. "object" is interpreted
+                as a sequence of astropy HDU objects.
+            * 'iterator' - use self.from_iterator. "object" is interpreted
+                as an iterator which returns tuples of the header and array.
         dtype : str or dtype, default None
             dtype of ndarray.
             If None, use eclair.common.default_dtype.
         kwargs : keyword argments
             Additional keyword arguments passed to the method
-            to initialize attributes.
+            specified by "method".
 
         See Also
         --------
@@ -80,30 +186,26 @@ class FitsContainer(object):
 
         attributes = ('list','header','data')
 
-        if object is None:
-            for attr_name in attributes:
-                setattr(self,[])
-        elif isinstance(object,(np.ndarray,cp.ndarray)):
-            self.from_array(object,**kwargs)
-        elif isinstance(object,FitsContainer):
+        if isinstance(object,FitsContainer):
             for attr_name in attributes:
                 setattr(self,getattr(object,attr_name))
-        elif isinstance(object,Sequence):
-            try:
-                t = type(object[0])
-            except IndexError:
-                raise ValueError('given sequence is empty')
-            if issubclass(t,fits.HDUList):
-                method = self.from_hduls
-            elif issubclass(t,fits.hdu.image._ImageBaseHDU):
-                method = self.from_hdus
-            else:
-                method = self.from_files
-            method(object,**kwargs)
-        elif isinstance(object,Iterator):
-            self.from_iterator(object,**kwargs)
+        elif method == 'empty':
+            for attr_name in attributes:
+                setattr(self,[])
         else:
-            raise TypeError('Unsupported type')
+            methods = {
+                'array': self.from_array,
+                'hduls': self.from_hduls,
+                'hdus': self.from_hdus,
+                'files': self.from_files,
+                'iterator': self.from_iterator,
+            }
+            try:
+                callback = methods[method]
+            except KeyError:
+                raise ValueError('invalid method specification')
+            else:
+                callback(object,**kwargs)
 
     @property
     def list(self):
@@ -137,7 +239,10 @@ class FitsContainer(object):
     @data.setter
     def data(self,array):
         array = cp.array(array,ndmin=3,copy=False,dtype=self.dtype)
-        assert array.ndim == 3
+        try:
+            assert array.ndim == 3
+        except AssertionError as e:
+            raise ValueError('shape of given array is invalid') from e
         self.__data = array
 
     def __getitem__(self,idx):
@@ -156,7 +261,7 @@ class FitsContainer(object):
             view.data   = data[idx]
             return view
         elif isinstance(idx,Iterable):
-            indices = builtins.list(idx)
+            indices = [i for i in idx]
             copied = copy.copy(self)
             if (all(isinstance(i,bool) for i in indices)
                     and len(indices)==len(self)):
@@ -255,8 +360,8 @@ class FitsContainer(object):
         data_to_add = [cp.asarray(arg.data,dtype=self.dtype) for arg in args]
         try:
             self.data = cp.concatenate([self.data] + data_to_add, axis=0)
-        except ValueError:
-            raise ValueError('data shape mismatch')
+        except ValueError as e:
+            raise ValueError('data shape mismatch') from e
 
         return self
 
@@ -335,19 +440,16 @@ class FitsContainer(object):
 
         ini_total = mempool.total_bytes()
 
-        tmp_head = []
-        tmp_data = []
-        happend = tmp_head.append
-        dappend = tmp_data.append
-
-        for h, d in wrapper(mapping(*args) for args in iterable):
-            happend(h)
-            dappend(cp.asarray(d,dtype=self.dtype))
+        tmp = tuple(
+            (h, cp.asarray(d,dtype=self.dtype))
+            for h, d in wrapper(mapping(*args) for args in iterable)
+        )
+        tmp_head, tmp_data = zip(*tmp)
 
         self.header = tmp_head
-        self.data   = cp.stack(tmp_data)
+        self.data = cp.stack(tmp_data)
 
-        del tmp_data[:]
+        del tmp, tmp_data
 
         if ini_total < mempool.total_bytes():
             mempool.free_all_blocks()
@@ -371,11 +473,11 @@ class FitsContainer(object):
         --------
         from_iterator : Load headers and data from iterator
         '''
-        self.list = files
+        self.list = (str(f) for f in files)
 
         iterable = (
             fitsloader(x,dtype=self.dtype,xp=np,hdu_index=hdu_index)
-                for x in self.list
+                for x in files
         )
 
         self.from_iterator(iterable,**kwargs)
@@ -401,7 +503,7 @@ class FitsContainer(object):
         if not all(isinstance(hdul,fits.HDUList) for hdul in hduls):
             raise TypeError('Input must be a sequence of HDUList')
 
-        self.list = [hdul.filename() for hdul in hduls]
+        self.list = (hdul.filename() for hdul in hduls)
 
         iterable = (
             hdu_splitter(x[hdu_index],dtype=self.dtype,xp=np) for x in hduls
@@ -468,93 +570,3 @@ class FitsContainer(object):
         for (head, data), o in zip(iterator,outlist):
             hdu = mkhdu(data,header=head)
             hdu.writeto(o,**kwargs)
-
-def hdu_splitter(hdu,dtype=None,xp=cp):
-    '''
-    Split HDU object into header and data
-
-    Parameters
-    ----------
-    hdu : astropy HDU object
-    dtype : str or dtype, default None
-        dtype of array used internally
-        If None, use eclair.common.default_dtype.
-        If the input dtype is different, use a casted copy.
-    xp : module object of numpy or cupy, default cupy
-        Whether the return value is numpy.ndarray or cupy.ndarray
-    
-    Returns
-    -------
-    header : astropy.io.fits.Header
-    data : ndarray
-    '''
-    try:
-        header = hdu.header
-        data = hdu.data
-    except AttributeError:
-        raise TypeError('input must be the HDU object')
-    else:
-        data = xp.asarray(data,dtype=judge_dtype(dtype))
-
-    return header, data
-
-def mkhdu(data,header=None,hdu_class=fits.PrimaryHDU):
-    '''
-    Creates HDU from given data
-
-    Parameters
-    ----------
-    data : ndarray
-    header : astropy.io.fits.Header, default None
-        The header associated with data.
-        If None, a header of the appropriate type is created
-        for the supplied data.
-    hdu_class : class, default astropy.io.fits.PrimaryHDU
-        HDU class
-
-    Returns
-    -------
-    hdu : HDU object
-
-    Notes
-    -----
-    This function is intended for use inside eclair.
-    It may be better to call astropy HDU class dilectly.
-    '''
-    hdu = hdu_class(data=cp.asnumpy(data))
-    now = Time.now().isot
-
-    hdu.header['ORIGIN'] = origin
-    hdu.header['DATE']   = (now,'Date HDU was created')
-    if header is not None:
-        for key in ('ORIGIN','DATE'):
-            header.remove(key,ignore_missing=True)
-        hdu.header.extend(header)
-        
-    return hdu
-
-def fitsloader(name,hdu_index=0,**kwargs):
-    '''
-    Read FITS file and get header and data.
-
-    Parameters
-    ----------
-    name : str
-        path of FITS file
-        Whether path-like objects are supported depends on
-        the version of Python and Astropy.
-    hdu_index : int, default 0
-        Index in HDUList of HDU
-    kwargs : keyward arguments
-        Additional keyword arguments to pass to the hdu_splitter function
-        See also hdu_splitter.
-
-    Returns
-    -------
-    header : astropy.io.fits.Header
-    data : ndarray
-    '''
-    with fits.open(name) as hdul:
-        result = hdu_splitter(hdul[hdu_index],**kwargs)
-        
-    return result

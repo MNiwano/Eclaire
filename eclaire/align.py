@@ -90,8 +90,60 @@ class Shift:
         spline1d(tmpd.T,dy,vy,shifted[1:,1:])
         return shifted
 
-def imalign(data,shifts,interp='spline3',boundary='neighbor',
-            trimimages=True,dtype=None):
+def imshift(data,shift,interp='spline3',boundary='neighbor',dtype=None):
+    '''
+    Shift an image
+
+    Parameters
+    ----------
+    data : 2D ndarray
+        An array of image.
+    shifts : array-like
+        A relative position of shifted image in units of pixel.
+        The 1st item is interpreted as the value of X,
+        the 2nd item as the value of Y.
+    interp : str, default 'spline3'
+        Subpixel interpolation algorithm in subpixel image shift.
+        The choices are: 'spline3' (bicubic spline), 
+        'poly3' (3rd order interior polynomial), 'linear' (bilinear), 
+        and 'neighbor' (nearest neighbor).
+    boundary : str, default 'neighbor'
+        The choices are: 'neighbor', 'constant'.
+    dtype : str or dtype, default None
+        dtype of array used internally.
+        If None, use eclair.common.default_dtype.
+        If the input dtype is different, use a casted copy.
+    
+    Returns
+    -------
+    shifted : 2D cupy.ndarray
+        An array of the shifted image
+    '''
+    dtype = judge_dtype(dtype)
+    data = cp.asarray(data,dtype=dtype)
+    shift = np.asarray(cp.asnumpy(shift),dtype=dtype)
+
+    try:
+        shift = shift.reshape(2)
+    except ValueError:
+        raise ValueError('shift must be a sequence consisting of 2 values')
+    try:
+        y_len, x_len = shape = np.array(data.shape)
+    except ValueError:
+        raise ValueError('data must have 2 dimensions')
+
+    shifter = Shift(
+        x_len=x_len, y_len=y_len, interp=interp,
+        boundary=boundary, dtype=dtype
+    )
+    shifted = shifter.interp(data,*shift)
+
+    return shifted
+
+
+def imalign(
+        data, shifts, interp='spline3', boundary='neighbor',
+        trimimages=True, dtype=None):
     '''
     Stack the images with aligning their relative positions
 
@@ -208,14 +260,15 @@ bilinear = cp.ElementwiseKernel(
     in_params='raw T x, T dx, T dy',
     out_params='T z',
     operation='''
-        int cols = x.shape()[1] - 1;
-        int ix = i % cols;
-        int iy = i / cols;
+        typedef unsigned int uint;
+        uint cols = x.shape()[1] - 1;
+        uint ix = i % cols;
+        uint iy = i / cols;
+        uint i0[] = {iy, ix};
+        uint i1[] = {iy, ix+1};
+        uint i2[] = {iy+1, ix};
+        uint i3[] = {iy+1, ix+1};
         T ex = 1-dx, ey = 1-dy;
-        int i0[] = {iy, ix};
-        int i1[] = {iy, ix+1};
-        int i2[] = {iy+1, ix};
-        int i3[] = {iy+1, ix+1};
         z = dy*(dx*x[i0] + ex*x[i1]) + ey*(dx*x[i2] + ex*x[i3]);
     ''',
     name='bilinear'
@@ -225,16 +278,17 @@ polynomial = cp.ElementwiseKernel(
     in_params='raw T input, raw T mat',
     out_params='T output',
     operation='''
-        int width = input.shape()[1] - 3;
-        int i_x = i % width, i_y = i / width;
-        int idx1[2], idx2[2];
-        int *y1 = &(idx1[0]), *x1 = &(idx1[1]);
-        int *y2 = &(idx2[0]), *x2 = &(idx2[1]);
+        typedef unsigned int uint;
+        uint width = input.shape()[1] - 3;
+        uint i_x = i % width, i_y = i / width;
+        uint idx1[2], idx2[2];
+        uint *y1 = idx1, *x1 = idx1+1;
+        uint *y2 = idx2, *x2 = idx2+1;
         output = 0;
         for (*y1=0, *y2=i_y; *y1<4; (*y1)++, (*y2)++) {
             T tmp = 0;
             for (*x1=0, *x2=i_x; *x1<4; (*x1)++, (*x2)++) {
-                tmp += mat[idx1] * input[idx2];
+                tmp = fma(mat[idx1],input[idx2],tmp);
             }
             output += tmp;
         }
@@ -246,7 +300,7 @@ v_vector = cp.ElementwiseKernel(
     in_params='raw T input',
     out_params='T output',
     operation='''
-        int cols = input.shape()[1];
+        unsigned int cols = input.shape()[1];
         T d0 = input[i];
         T d1 = input[i+cols];
         T d2 = input[i+2*cols];
@@ -259,9 +313,10 @@ solve_tridiag = cp.ElementwiseKernel(
     in_params='raw T vec1, raw T vec2',
     out_params='raw T data',
     operation='''
-        int h = data.shape()[0];
-        int idx[2] = {0, i};
-        int *j = &(idx[0]);
+        typedef unsigned int uint;
+        uint h = data.shape()[0];
+        uint idx[2] = {0, i};
+        uint *j = idx;
 
         T tmp = (data[idx] /= vec1[*j]);
 
@@ -274,7 +329,8 @@ solve_tridiag = cp.ElementwiseKernel(
         }
 
         // Backward substitution
-        for ((*j)--; *j>=0; (*j)--) {
+        uint c;
+        for ((*j)--, c=0; c<h; (*j)--,c++) {
             tmp = (
                 data[idx] -= tmp * vec2[*j]
             );
@@ -287,12 +343,12 @@ spline_core = cp.ElementwiseKernel(
     in_params='raw T u, raw T y, T d',
     out_params='T z',
     operation='''
-        int i2 = i + u.shape()[1];
+        unsigned int i2 = i + u.shape()[1];
         T u1 = u[i], u2 = u[i2];
         T y1 = y[i], y2 = y[i2];
-        T a3 = u2 - u1;
-        T a2 = 3 * u1;
         T a1 = (y2-y1) - (2*u1+u2);
+        T a2 = 3 * u1;
+        T a3 = u2 - u1;
         z = y1 + d*(a1 + d*(a2 + d*a3))
     ''',
     name='spline'

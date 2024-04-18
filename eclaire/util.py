@@ -1,6 +1,8 @@
 
 # -*- coding: utf-8 -*-
 
+import warnings
+
 import cupy as cp
 
 from . import common
@@ -23,10 +25,13 @@ def judge_dtype(dtype):
 
     dtype = cp.dtype(dtype)
 
-    if dtype.kind == 'f':
-        return dtype
-    else:
-        raise TypeError('dtype must be floating point')
+    if dtype.kind != 'f':
+        warnings.warn(
+            'Use of dtypes other than floating point is not recommended',
+            stacklevel=3,
+        )
+
+    return dtype
 
 def reduction(image,bias,dark,flat,out=None,dtype=None):
     '''
@@ -79,12 +84,9 @@ reduction_kernel = cp.ElementwiseKernel(
 )
 
 checkfinite = cp.ElementwiseKernel(
-    in_params='T x, T f',
-    out_params='T z',
-    operation='''
-        int flag = isfinite(x) & isfinite(f);
-        z = (flag ? f : 0);
-    ''',
+    in_params='T x, T w',
+    out_params='I f',
+    operation='f &= isfinite(x) & isfinite(w)',
     name='checkfinite'
 )
 
@@ -92,9 +94,7 @@ replace_kernel = cp.ElementwiseKernel(
     in_params='T input, T before, T after',
     out_params='T output',
     operation='''
-        output = (
-            (input==before) ? after:input
-        )
+        output = ((input==before)? after : input)
     ''',
     name='replace'
 )
@@ -102,13 +102,13 @@ replace_kernel = cp.ElementwiseKernel(
 ternary_operation = cp.ElementwiseKernel(
     in_params='I condition, T t, T f',
     out_params='T output',
-    operation='output = (condition ? t : f)',
+    operation='output = (condition? t : f)',
     name='ternary_operation'
 )
 
 elementwise_not = cp.ElementwiseKernel(
     in_params='T m',
-    out_params='T f',
+    out_params='I f',
     operation='f = (m==0)',
     name='elementwise_not'
 )
