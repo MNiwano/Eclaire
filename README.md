@@ -31,7 +31,5 @@ pip install git+https://github.com/MNiwano/Eclaire
     a sample program running on Google Colaboratory for trying Eclaire
     
 ## Reference
-DOI: https://doi.org/10.1093/pasj/psaa091
-
-arXiv: https://arxiv.org/abs/2008.11486
+M. Niwano et al., 2021, PASJ: https://ui.adsabs.harvard.edu/abs/2021PASJ...73...14N/abstract
     
