@@ -13,7 +13,7 @@ and their processing speed is acceralated by using GPU via CUDA.
 ## Requirements
 * NVIDIA GPU
 * CUDA
-* Below Python modules
+* Following Python modules
   * NumPy
   * Astropy
   * CuPy
