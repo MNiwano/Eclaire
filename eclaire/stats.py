@@ -227,7 +227,7 @@ def sigma_clipped_stats(data,axis=None,keepdims=False,mask=None,weights=None,
 
 def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
     combine='mean',center='mean',iters=5,width=3.0,dtype=None,exthdus=[],
-    **kwargs):
+    return_type='ndarray',**kwargs):
     '''
     Combine images and optionally write to FITS file
 
@@ -246,9 +246,8 @@ def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
         If the string is path-like, only basename is used.
     header : astropy.io.fits.Header, default None
         The header associated with data.
-        This is used only when the name is given.
-        If None, a header of the appropriate type is created
-        for the supplied data.
+        This is used only when the name is given or return_type is 'hdul'.
+        If None, an appropriate header is created for the supplied data.
     weights : array-like, default None
         array of weights associated with the values in data.
         This must be a broadcastable array with data, or a 1D array.
@@ -270,24 +269,33 @@ def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
         dtype of array used internally
         If None, use eclair.common.default_dtype.
         If the input dtype is different, use a casted copy.
+    exthdus: sequence of astropy HDU instances, default []
+        sequence of HDUs to be added to output HDUList.
+    return_type : {'ndarray', 'hdul'}, default 'hdul'
+        If 'ndarray' is selected, return combined image as 2D cupy.ndarray.
+        If 'hdul', return as astropy.fits.HDUList.
     kwargs : keywards arguments
         Additional keywards arguments given to writeto method of HDU object
     
     Returns
     -------
-    combined : 2D cupy.ndarray
+    combined : 2D cupy.ndarray or astropy.fits.HDUList
+        combined image.
+        type is determined by return_type.
 
     See Also
     --------
     sigma_clipped_stats : Calculate sigma-clipped statistics
     '''
-    
+    if return_type not in {'ndarray', 'hdul'}:
+        raise ValueError('invalid return_type specification')
+
     combined, *_ = sigma_clipped_stats(
         data, axis=0, mask=mask, weights=weights, dtype=dtype,
         reduce=combine, center=center, iters=iters, width=width
     )
 
-    if name is not None:
+    if (name is not None) or (return_type == 'hdul'):
         if header is None:
             header = fits.Header()
         else:
@@ -312,15 +320,18 @@ def imcombine(data,name=None,list=None,header=None,weights=None,mask=None,
         
         hdu = mkhdu(combined,header=header)
 
-        hdul = fits.HDUList(
-            [hdu] + exthdus
-        )
+        hdul = fits.HDUList([hdu] + exthdus)
+    
+    if name is not None:
         hdul.writeto(name,**kwargs)
         print(
             'Combine: {:d} frames, Output: {}'.format(ldata,basename(name))
         )
     
-    return combined
+    if return_type == 'hdul':
+        return hdul
+    else:
+        return combined
 
 check_sum = cp.ReductionKernel(
     in_params='T x',
